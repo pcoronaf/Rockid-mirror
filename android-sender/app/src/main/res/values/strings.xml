@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Rokid Mirror</string>
+    <string name="notification_channel">Screen mirroring</string>
+    <string name="notification_title">Mirroring to Rokid Glasses</string>
+    <string name="notification_text">Your screen is being streamed to the glasses.</string>
+    <string name="notification_stop">Stop</string>
+</resources>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pairing credentials are device-bound (Keystore) and must never be backed up or transferred. -->
+<data-extraction-rules>
+    <cloud-backup><exclude domain="sharedpref" path="." /><exclude domain="file" path="." /></cloud-backup>
+    <device-transfer><exclude domain="sharedpref" path="." /><exclude domain="file" path="." /></device-transfer>
+</data-extraction-rules>

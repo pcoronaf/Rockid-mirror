@@ -1,0 +1,36 @@
+# Gradle
+.gradle/
+**/build/
+!**/src/**/build/
+.kotlin/
+
+# Android / IDE
+local.properties
+*.iml
+.idea/
+.vscode/
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+.cxx/
+.externalNativeBuild/
+
+# Signing / secrets — never commit keys or pairing material
+*.jks
+*.keystore
+*.pem
+*.p12
+secrets.properties
+keystore.properties
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tool output
+*.h264
+*.log
+/out/
