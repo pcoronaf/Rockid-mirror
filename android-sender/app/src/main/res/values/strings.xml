@@ -4,4 +4,7 @@
     <string name="notification_title">Mirroring to Rokid Glasses</string>
     <string name="notification_text">Your screen is being streamed to the glasses.</string>
     <string name="notification_stop">Stop</string>
+    <string name="notification_title_connected">Connected to Rokid Glasses</string>
+    <string name="notification_connected">Ready to mirror. Tap to open.</string>
+    <string name="notification_reconnecting">Reconnecting to the glasses…</string>
 </resources>

@@ -79,35 +79,62 @@ class MirrorService : Service() {
                         .onSuccess { watchSession() }
                 }
             }
-            ACTION_STOP -> { session.stopStreaming("notification"); stopSelfSafely() }
+            ACTION_STOP -> {
+                session.stopStreaming("notification")
+                // Stay foreground if the link is still up; the watcher stops us once it is not.
+                if (!session.isConnected) stopSelfSafely() else goForeground(projecting = false, text = getString(R.string.notification_connected))
+            }
             else -> stopSelfSafely()
         }
         return START_NOT_STICKY
     }
 
+    /**
+     * The service outlives capture on purpose. Android ends the projection when the screen locks;
+     * if the service stopped there too, the process would go to the background and the platform
+     * would abort the control socket, which looked to the user like "connection lost" on unlock.
+     * While a receiver link is up we stay foreground as a connected-device session instead.
+     */
     private fun watchSession() {
+        if (watching) return
+        watching = true
         scope.launch {
             session.state.collectLatest { s ->
-                val alive = s is SenderState.Streaming || s is SenderState.Paused || s is SenderState.Recovering || s is SenderState.AwaitingCapturePermission
-                if (!alive) stopSelfSafely()
+                when {
+                    s is SenderState.Streaming || s is SenderState.Paused || s is SenderState.AwaitingCapturePermission ->
+                        goForeground(projecting = true, text = getString(R.string.notification_text))
+                    s is SenderState.Recovering -> goForeground(projecting = false, text = getString(R.string.notification_reconnecting))
+                    s is SenderState.Ready -> goForeground(projecting = false, text = getString(R.string.notification_connected))
+                    else -> stopSelfSafely()
+                }
             }
         }
     }
 
-    private fun goForeground() {
+    private var watching = false
+
+    private fun goForeground(projecting: Boolean = true, text: String = "") {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CHANNEL_ID, getString(R.string.notification_channel), NotificationManager.IMPORTANCE_LOW))
+        val body = text.ifBlank { getString(R.string.notification_text) }
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val stop = PendingIntent.getService(this, 1, Intent(this, MirrorService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val n = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(getString(R.string.notification_title))
-            .setContentText(getString(R.string.notification_text))
+            .setContentTitle(getString(if (projecting) R.string.notification_title else R.string.notification_title_connected))
+            .setContentText(body)
             .setContentIntent(open)
             .setOngoing(true)
             .addAction(Notification.Action.Builder(null, getString(R.string.notification_stop), stop).build())
             .build()
-        startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        val type = if (projecting) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION else ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+        try {
+            startForeground(NOTIFICATION_ID, n, type)
+        } catch (e: Exception) {
+            // Never let a foreground-type change take the session down with it.
+            MirrorLog.e(TAG, "start_foreground_failed", e, "projecting" to projecting)
+            runCatching { startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION) }
+        }
     }
 
     private fun stopSelfSafely() {

@@ -37,6 +37,12 @@ import com.rokidmirror.sender.capture.CaptureMode
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    override fun onResume() {
+        super.onResume()
+        // The platform can abort our socket while the screen is off; pick the link back up.
+        MirrorApplication.from(application).session.retryConnectionIfDropped()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val container = MirrorApplication.from(application)

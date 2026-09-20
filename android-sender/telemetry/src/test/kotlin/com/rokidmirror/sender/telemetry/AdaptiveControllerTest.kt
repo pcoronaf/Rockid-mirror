@@ -44,10 +44,24 @@ class AdaptiveControllerTest {
     }
 
     @Test
-    fun highRttAndEncodeBackpressureCountAsStress() {
-        assertTrue(ctl().evaluate(calm.copy(rttMs = 150f)) is AdaptiveAction.SetBitrate)
-        assertTrue(ctl().evaluate(calm.copy(encodeLatencyMs = 60f)) is AdaptiveAction.SetBitrate)
-        assertTrue(ctl().evaluate(calm.copy(receiverDecodeLagFrames = 4)) is AdaptiveAction.SetBitrate)
+    fun highRttAndEncodeBackpressureCountAsStressOnceSustained() {
+        for (input in listOf(calm.copy(rttMs = 150f), calm.copy(encodeLatencyMs = 60f), calm.copy(receiverDecodeLagFrames = 4))) {
+            val c = ctl()
+            assertEquals("one bad sample must not degrade", AdaptiveAction.None, c.evaluate(input))
+            assertTrue(c.evaluate(input) is AdaptiveAction.SetBitrate)
+        }
+    }
+
+    @Test
+    fun isolatedBlipsNeverWalkTheStreamDown() {
+        val c = ctl()
+        repeat(20) {
+            c.evaluate(mild)   // one stressed period
+            c.evaluate(calm)   // recovers before the second
+        }
+        assertEquals(3_000_000, c.level.bitrate)
+        assertEquals(60, c.level.fps)
+        assertEquals(0, c.level.resolutionStep)
     }
 
     @Test

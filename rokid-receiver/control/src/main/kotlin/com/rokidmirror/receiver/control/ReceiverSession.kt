@@ -40,6 +40,11 @@ interface SessionSurface {
 
 interface SessionDecoder {
     fun configure(codec: VideoCodec, width: Int, height: Int, csd0: ByteArray?, csd1: ByteArray?): Boolean
+    /**
+     * False while the render surface has not been created yet. Configuration is then deferred
+     * and runs from the surface callback, which is not an error.
+     */
+    val surfaceReady: Boolean
     fun submit(unit: EncodedAccessUnit): Boolean
     fun stop()
     val isConfigured: Boolean
@@ -191,9 +196,18 @@ class ReceiverSession(
         streamFormat = f
         if (changed || !decoder.isConfigured) {
             val ok = decoder.configure(codec, f.width, f.height, f.csd0?.let { Base64.getDecoder().decode(it) }, f.csd1?.let { Base64.getDecoder().decode(it) })
-            if (!ok) { transport.sendError(ErrorCode.DECODER_FAILED, "decoder configuration failed"); overlay.setWarning("Decoder failed"); return }
-            transport.requireKeyframe()
-            requestKeyframe("decoder (re)configured")
+            if (!ok) {
+                if (!decoder.surfaceReady) {
+                    // The video surface is created once the renderer shows it; the pending format
+                    // is applied from that callback. Nothing is wrong, so tell the sender nothing.
+                    ReceiverLog.i(TAG, "decoder_deferred_until_surface")
+                    return
+                }
+                transport.sendError(ErrorCode.DECODER_FAILED, "decoder configuration failed")
+                overlay.setWarning("Decoder failed")
+                return
+            }
+            onDecoderReady()
         }
         ReceiverLog.i(TAG, "stream_format", "codec" to f.codec, "w" to f.width, "h" to f.height, "srcW" to f.sourceWidth, "srcH" to f.sourceHeight, "hasCsd" to (f.csd0 != null))
     }
@@ -202,8 +216,9 @@ class ReceiverSession(
         if (!decoder.isConfigured) {
             // Keyframes carry SPS/PPS in-band; configure lazily if STREAM_FORMAT has not arrived yet.
             val f = streamFormat
-            if (f == null || !unit.isKeyframe) return
+            if (f == null || !unit.isKeyframe || !decoder.surfaceReady) return
             if (!decoder.configure(VideoCodec.fromWire(f.codec) ?: return, f.width, f.height, null, null)) return
+            onDecoderReady()
         }
         stats.onComplete(unit.frameId, firstPacketNs, completeNs, unit.size)
         framesSubmitted++
@@ -216,6 +231,13 @@ class ReceiverSession(
     fun onReassemblyStats(s: ReassemblyStats) {
         stats.onPacketCounters(s.packetsReceived, s.packetsLost, s.framesDelivered, s.framesDropped)
         if (stats.consumeKeyframeSuggestion(s.keyframeRequestsSuggested)) requestKeyframe("packet loss")
+    }
+
+    /** Called after a successful (re)configuration, including a deferred one. */
+    fun onDecoderReady() {
+        overlay.setWarning(null)
+        transport.requireKeyframe()
+        requestKeyframe("decoder (re)configured")
     }
 
     fun onDecoderError(message: String) {

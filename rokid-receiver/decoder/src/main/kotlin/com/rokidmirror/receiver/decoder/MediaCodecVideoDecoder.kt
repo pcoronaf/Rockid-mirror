@@ -155,11 +155,12 @@ class MediaCodecVideoDecoder(
             val render = info.size > 0
             runCatching { codec.releaseOutputBuffer(index, render) }
             if (render) {
+                // Always account the output, even if the timestamp cannot be matched to a frame
+                // id: otherwise framesDecoded lags framesSubmitted forever and the sender reads
+                // it as decoder backpressure and throttles the stream to nothing.
                 val frameId = frameIdFor(info.presentationTimeUs)
-                if (frameId != null) {
-                    synchronized(renderedLookup) { renderedLookup[info.presentationTimeUs] = frameId }
-                    stats.onDecoded(frameId, now)
-                }
+                if (frameId != null) synchronized(renderedLookup) { renderedLookup[info.presentationTimeUs] = frameId }
+                stats.onDecoded(frameId ?: -1, now)
             }
         }
 

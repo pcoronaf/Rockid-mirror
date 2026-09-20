@@ -69,7 +69,7 @@ import java.util.Base64
 class MirrorSession(private val context: Context, private val container: AppContainer) {
     private companion object {
         const val TAG = "Session"
-        const val RECONNECT_WINDOW_MS = 20_000L
+        const val RECONNECT_WINDOW_MS = 60_000L
         const val VIEWPORT_SEND_INTERVAL_MS = 40L
     }
 
@@ -115,6 +115,8 @@ class MirrorSession(private val context: Context, private val container: AppCont
     private var negotiatedLongEdge = 0
     private var resolutionStep = 0
     private var lastFormatSent: Payloads.StreamFormat? = null
+    /** Kept after a stream ends so the diagnostics export still describes the last session. */
+    private var lastStreamParams: StreamParams? = null
     private var isSynthetic = false
 
     init {
@@ -263,6 +265,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
         val probe = EncoderCapabilities.probe() ?: throw MirrorException(ErrorCode.ENCODER_UNAVAILABLE, "no H.264 encoder")
         val params = StreamNegotiator.negotiate(_info.value.preset, source.width, source.height, caps, probe.limits)
         streamParams = params
+        lastStreamParams = params
         sourceGeometry = source
         negotiatedLongEdge = maxOf(params.width, params.height)
         resolutionStep = 0
@@ -323,6 +326,12 @@ class MirrorSession(private val context: Context, private val container: AppCont
         val cfg = encoderConfig ?: return@withLock
         val source = sourceGeometry ?: return@withLock
         if (width <= 0 || height <= 0) return@withLock
+        // Resizing the VirtualDisplay makes Android report the content size again. Without this
+        // guard every encoder restart triggered another resize round and reset the viewport.
+        if (width == source.width && height == source.height) {
+            MirrorLog.d(TAG, "content_resize_noop", "w" to width, "h" to height)
+            return@withLock
+        }
         val newSource = source.copy(width = width, height = height)
         sourceGeometry = newSource
         capture.setSourceGeometry(newSource)
@@ -398,7 +407,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
                 delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(2000)
             }
             stopStreamingInternal("reconnect window exceeded")
-            dispatch(SenderEvent.Failed(ErrorCode.NETWORK_LOST, "could not reconnect within ${RECONNECT_WINDOW_MS / 1000}s"))
+            dispatch(SenderEvent.Failed(ErrorCode.NETWORK_LOST, "could not reconnect within ${RECONNECT_WINDOW_MS / 1000}s; reopen the app to retry"))
         }
     }
 
@@ -518,11 +527,28 @@ class MirrorSession(private val context: Context, private val container: AppCont
 
     fun requestKeyframe() = encoder.requestKeyFrame()
 
+    /** True while the control channel to a receiver is established. */
+    val isConnected: Boolean get() = transport.state.value is TransportState.Connected
+
+    /**
+     * Re-establishes a dropped link on demand, e.g. when the app returns to the foreground after
+     * the screen was locked and the platform tore the socket down.
+     */
+    fun retryConnectionIfDropped() {
+        if (userDisconnect || isConnected) return
+        if (reconnectJob?.isActive == true) return
+        val state = _state.value
+        val shouldRetry = state is SenderState.Error && (state.code == ErrorCode.NETWORK_LOST || state.code == ErrorCode.RECEIVER_NOT_FOUND)
+        if (!shouldRetry) return
+        onLinkLost(ErrorCode.NETWORK_LOST, "retry after returning to foreground")
+    }
+
     // ---- diagnostics -----------------------------------------------------------------------
 
     fun diagnosticsReport(): DiagnosticsReport {
         val i = _info.value
         val rs = i.transport.receiverStats
+        val last = i.stream ?: lastStreamParams
         return DiagnosticsReport(
             generatedAtEpochMs = System.currentTimeMillis(),
             senderVersion = AppContainer.VERSION,
@@ -530,8 +556,8 @@ class MirrorSession(private val context: Context, private val container: AppCont
             phoneModel = "${Build.MANUFACTURER} ${Build.MODEL}",
             androidVersion = "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
             receiverName = i.receiverName, receiverModel = i.capabilities?.receiverModel, receiverOs = i.capabilities?.receiverOs,
-            negotiatedCodec = i.stream?.codec?.wireName, encodedWidth = i.stream?.width ?: 0, encodedHeight = i.stream?.height ?: 0,
-            fps = i.encoderStats.fps, targetFps = i.stream?.fps ?: 0, bitrateBps = i.encoderStats.bitrateBps,
+            negotiatedCodec = last?.codec?.wireName, encodedWidth = last?.width ?: 0, encodedHeight = last?.height ?: 0,
+            fps = i.encoderStats.fps, targetFps = last?.fps ?: 0, bitrateBps = i.encoderStats.bitrateBps,
             rttMs = i.transport.rttMs, lossFraction = i.transport.lossFraction,
             encodeMsAvg = i.latency?.encodeMsAvg ?: 0f, encodeMsMax = i.latency?.encodeMsMax ?: 0f,
             receiverReassemblyMs = rs?.reassemblyMs ?: -1f, receiverDecodeMs = rs?.decodeMs ?: -1f, receiverRenderMs = rs?.renderMs ?: -1f,

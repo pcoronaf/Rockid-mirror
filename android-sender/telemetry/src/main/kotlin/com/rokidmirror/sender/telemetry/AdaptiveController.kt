@@ -33,6 +33,8 @@ class AdaptiveController(
     private val maxBitrate: Int,
     private val maxFps: Int,
     private val stableIntervalsBeforeUpgrade: Int = 5,
+    /** Consecutive stressed periods required before a non-severe degradation. */
+    private val stressPeriodsBeforeDegrade: Int = 2,
 ) {
     companion object {
         const val LOSS_MILD = 0.01f
@@ -45,12 +47,14 @@ class AdaptiveController(
 
     var level = AdaptiveLevel(maxBitrate, maxFps, 0); private set
     private var stableCount = 0
+    private var stressCount = 0
     private var lastKeyframeRequestPeriod = -10
     private var period = 0
 
     fun reset(startBitrate: Int, fps: Int) {
         level = AdaptiveLevel(startBitrate.coerceIn(minBitrate, maxBitrate), fps, 0)
         stableCount = 0
+        stressCount = 0
     }
 
     /** Called once per period; returns at most one action so changes stay observable. */
@@ -69,8 +73,13 @@ class AdaptiveController(
         }
         if (stressed) {
             stableCount = 0
+            stressCount++
+            // Hysteresis: one bad sample is not a trend. Reacting to every blip walked the
+            // stream down to an unusable bitrate and resolution and never recovered.
+            if (stressCount < stressPeriodsBeforeDegrade && !severe) return AdaptiveAction.None
             return degrade(severe)
         }
+        stressCount = 0
         stableCount++
         if (stableCount >= stableIntervalsBeforeUpgrade) {
             stableCount = 0

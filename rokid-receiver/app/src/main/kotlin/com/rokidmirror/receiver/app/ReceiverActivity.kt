@@ -115,7 +115,13 @@ class ReceiverActivity : Activity() {
                 stats = stats, scope = scope, debugOverlay = BuildConfig.DEBUG,
                 onForgetAllSenders = { app.credentials.forgetAll() },
             )
-            renderer.onSurfaceReady = { holder -> surfaceHolder = holder; pendingFormat?.let { decoder.configure(it, holder.surface) } }
+            renderer.onSurfaceReady = { holder ->
+                surfaceHolder = holder
+                pendingFormat?.let { f ->
+                    if (decoder.configure(f, holder.surface)) session.onDecoderReady()
+                    else session.onDecoderError("configuration failed after surface creation")
+                }
+            }
             renderer.onSurfaceLost = { surfaceHolder = null; decoder.stop() }
             advertiser = NsdAdvertiser(this)
 
@@ -210,6 +216,7 @@ class ReceiverActivity : Activity() {
             val holder = surfaceHolder ?: return false
             return decoder.configure(f, holder.surface)
         }
+        override val surfaceReady: Boolean get() = surfaceHolder != null
         override fun submit(unit: EncodedAccessUnit): Boolean = decoder.submit(unit) == DecodeResult.QUEUED
         override fun stop() { pendingFormat = null; decoder.stop() }
         override val isConfigured: Boolean get() = decoder.isConfigured
