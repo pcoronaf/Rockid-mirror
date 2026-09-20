@@ -31,7 +31,8 @@ class AndroidPlatformAdapter(private val activity: Activity) : RokidPlatformAdap
     private companion object { const val TAG = "Platform" }
 
     private val inputs = MutableSharedFlow<GlassesInput>(extraBufferCapacity = 16)
-    private val sensorManager = activity.getSystemService(Activity.SENSOR_SERVICE) as SensorManager
+    // Optional: a stripped-down glasses runtime may not expose every system service.
+    private val sensorManager = runCatching { activity.getSystemService(Activity.SENSOR_SERVICE) as? SensorManager }.getOrNull()
 
     override fun describe(): PlatformDescription = PlatformDescription(
         model = "${Build.MANUFACTURER} ${Build.MODEL} (${Build.DEVICE})",
@@ -49,6 +50,9 @@ class AndroidPlatformAdapter(private val activity: Activity) : RokidPlatformAdap
 
     override fun createRenderTarget(): RenderTarget = RenderTarget(SurfaceView(activity))
 
+    /** True when this build could reach the platform's sensor service at all. */
+    val sensorServiceAvailable: Boolean get() = sensorManager != null
+
     override fun setKeepAwake(enabled: Boolean) {
         if (enabled) activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -57,9 +61,13 @@ class AndroidPlatformAdapter(private val activity: Activity) : RokidPlatformAdap
     override fun getInputCapabilities() = InputCapabilities(touchBar = Support.UNVERIFIED, hardwareKeys = Support.UNVERIFIED)
 
     override fun getSensorCapabilities(): SensorCapabilities = SensorCapabilities(
-        rotationVector = if (sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR) != null || sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR) != null) Support.UNVERIFIED else Support.UNAVAILABLE,
-        gyroscope = if (sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE) != null) Support.UNVERIFIED else Support.UNAVAILABLE,
+        rotationVector = if (rotationSensor() != null) Support.UNVERIFIED else Support.UNAVAILABLE,
+        gyroscope = if (sensorManager?.getDefaultSensor(Sensor.TYPE_GYROSCOPE) != null) Support.UNVERIFIED else Support.UNAVAILABLE,
     )
+
+    private fun rotationSensor(): Sensor? = sensorManager?.let {
+        it.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR) ?: it.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+    }
 
     override fun inputEvents(): Flow<GlassesInput> = inputs.asSharedFlow()
 
@@ -84,8 +92,9 @@ class AndroidPlatformAdapter(private val activity: Activity) : RokidPlatformAdap
     }
 
     override fun headPose(): Flow<HeadPose> = callbackFlow {
-        val sensor = sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR) ?: sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-        if (sensor == null) { close(); return@callbackFlow }
+        val sm = sensorManager
+        val sensor = rotationSensor()
+        if (sm == null || sensor == null) { close(); return@callbackFlow }
         val rotation = FloatArray(9)
         val orientation = FloatArray(3)
         val listener = object : SensorEventListener {
@@ -97,7 +106,7 @@ class AndroidPlatformAdapter(private val activity: Activity) : RokidPlatformAdap
             }
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
         }
-        sensorManager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
-        awaitClose { sensorManager.unregisterListener(listener) }
+        sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
+        awaitClose { sm.unregisterListener(listener) }
     }
 }

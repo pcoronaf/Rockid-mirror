@@ -28,6 +28,8 @@ import java.util.Base64
 /** Receiver-side abstractions the session drives; implemented by renderer/decoder/transport modules. */
 interface SessionSurface {
     fun setSource(width: Int, height: Int)
+    /** Hide the video surface so the overlay is unobstructed while nothing is streaming. */
+    fun hideVideo()
     fun setViewport(state: ViewportState)
     val currentViewport: ViewportState
     val sourceWidth: Int
@@ -57,6 +59,7 @@ interface SessionTransport {
 
 interface SessionOverlay {
     fun setStatus(text: String)
+    fun setInfo(text: String)
     fun showPairingCode(formatted: String?)
     fun setWarning(text: String?)
     fun setDebug(text: String?)
@@ -136,6 +139,7 @@ class ReceiverSession(
 
     fun onDisconnected(reason: String) {
         decoder.stop()
+        surface.hideVideo()
         streamFormat = null
         framesSubmitted = 0
         overlay.showPairingCode(null)
@@ -157,6 +161,7 @@ class ReceiverSession(
             MessageType.STREAM_FORMAT -> onStreamFormat(ControlCodec.payloadOf(m, Payloads.StreamFormat.serializer()))
             MessageType.STREAM_STOP -> {
                 decoder.stop(); streamFormat = null
+                surface.hideVideo()
                 overlay.setStreamingIndicator(false)
                 enter(State.CONNECTED)
             }

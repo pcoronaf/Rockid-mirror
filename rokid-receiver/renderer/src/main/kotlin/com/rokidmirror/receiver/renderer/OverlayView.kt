@@ -17,7 +17,9 @@ class OverlayView(context: Context) : FrameLayout(context) {
     private val status = text(16f, Gravity.TOP or Gravity.START)
     private val code = text(44f, Gravity.CENTER).apply { typeface = Typeface.MONOSPACE; visibility = GONE }
     private val hint = text(14f, Gravity.CENTER or Gravity.BOTTOM).apply { visibility = GONE }
-    private val warning = text(14f, Gravity.BOTTOM or Gravity.START).apply { visibility = GONE }
+    private val warning = text(14f, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { visibility = GONE }
+    /** Always visible: proves the app is alive and carries the facts the M0 audit needs. */
+    private val info = text(10f, Gravity.BOTTOM or Gravity.START)
     private val debug = text(11f, Gravity.BOTTOM or Gravity.END).apply { typeface = Typeface.MONOSPACE; visibility = GONE }
     private val indicator = View(context).apply { setBackgroundColor(Color.WHITE); visibility = GONE }
 
@@ -36,6 +38,7 @@ class OverlayView(context: Context) : FrameLayout(context) {
     }
 
     fun setStatus(s: String) = post { status.text = s }
+    fun setInfo(s: String) = post { info.text = s }
     fun setStreamingIndicator(on: Boolean) = post { indicator.visibility = if (on) VISIBLE else GONE }
     fun showPairingCode(formatted: String?) = post {
         code.text = formatted ?: ""

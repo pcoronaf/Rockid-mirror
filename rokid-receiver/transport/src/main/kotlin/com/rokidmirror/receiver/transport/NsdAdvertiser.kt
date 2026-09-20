@@ -9,11 +9,14 @@ import com.rokidmirror.receiver.telemetry.ReceiverLog
 /** Advertises the receiver over DNS-SD so the phone finds it without manual IP entry. */
 class NsdAdvertiser(context: Context) {
     private companion object { const val TAG = "Nsd" }
-    private val nsd = context.getSystemService(Context.NSD_SERVICE) as NsdManager
+    // Optional: discovery is a convenience. Without it the phone can still connect by IP.
+    private val nsd = runCatching { context.getSystemService(Context.NSD_SERVICE) as? NsdManager }.getOrNull()
+    val available: Boolean get() = nsd != null
     private var listener: NsdManager.RegistrationListener? = null
 
     fun start(receiverId: String, name: String, controlPort: Int, displayWidth: Int, displayHeight: Int) {
         stop()
+        val manager = nsd ?: run { ReceiverLog.w(TAG, "nsd_unavailable"); return }
         val info = NsdServiceInfo().apply {
             serviceName = name.take(60)
             serviceType = Protocol.SERVICE_TYPE
@@ -31,8 +34,9 @@ class NsdAdvertiser(context: Context) {
             override fun onServiceUnregistered(serviceInfo: NsdServiceInfo) {}
         }
         listener = l
-        nsd.registerService(info, NsdManager.PROTOCOL_DNS_SD, l)
+        runCatching { manager.registerService(info, NsdManager.PROTOCOL_DNS_SD, l) }
+            .onFailure { ReceiverLog.e(TAG, "register_threw", it); listener = null }
     }
 
-    fun stop() { listener?.let { runCatching { nsd.unregisterService(it) } }; listener = null }
+    fun stop() { val m = nsd; listener?.let { l -> runCatching { m?.unregisterService(l) } }; listener = null }
 }

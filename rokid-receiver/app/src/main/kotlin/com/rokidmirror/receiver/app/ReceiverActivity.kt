@@ -11,6 +11,7 @@ import android.widget.FrameLayout
 import com.rokidmirror.protocol.VideoCodec
 import com.rokidmirror.receiver.BuildConfig
 import com.rokidmirror.protocol.control.ControlMessage
+import com.rokidmirror.protocol.Protocol
 import com.rokidmirror.protocol.control.ErrorCode
 import com.rokidmirror.protocol.control.Payloads
 import com.rokidmirror.protocol.video.EncodedAccessUnit
@@ -25,6 +26,7 @@ import com.rokidmirror.receiver.decoder.DecodeResult
 import com.rokidmirror.receiver.decoder.DecoderFormat
 import com.rokidmirror.receiver.decoder.MediaCodecVideoDecoder
 import com.rokidmirror.receiver.platform.AndroidPlatformAdapter
+import com.rokidmirror.receiver.platform.DisplayInfo
 import com.rokidmirror.receiver.platform.PlatformCapabilities
 import com.rokidmirror.receiver.renderer.OverlayView
 import com.rokidmirror.receiver.renderer.ViewportRenderer
@@ -57,55 +59,112 @@ class ReceiverActivity : Activity() {
     private val stats = PipelineStats()
     private var surfaceHolder: SurfaceHolder? = null
     private var pendingFormat: DecoderFormat? = null
+    /** False when onCreate could not finish; onStart/onStop then do nothing instead of crashing. */
+    private var ready = false
+    private var bootInfo = ""
+    private var ipInfo = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val app = application as ReceiverApplication
-        platform = AndroidPlatformAdapter(this)
-        platform.setKeepAwake(true)
-        hideSystemBars()
 
-        val display = platform.getDisplayInfo()
-        val root = FrameLayout(this)
+        // Step 1: get pixels on screen before anything that can fail, so a bad probe or a
+        // missing system service shows an error instead of a black rectangle.
+        platform = AndroidPlatformAdapter(this)
+        val display = runCatching { platform.getDisplayInfo() }.getOrElse { DisplayInfo(480, 640, 240, 60f) }
+        val root = FrameLayout(this).apply {
+            // Debug builds outline the window: if the outline is visible the display pipeline
+            // works and any remaining blankness is our logic, not compositing.
+            background = if (BuildConfig.DEBUG) {
+                android.graphics.drawable.GradientDrawable().apply {
+                    setColor(android.graphics.Color.BLACK)
+                    setStroke(2, android.graphics.Color.WHITE)
+                }
+            } else {
+                android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK)
+            }
+        }
         val host = FrameLayout(this).apply { clipChildren = true }
         renderer = ViewportRenderer(host, platform.createRenderTarget(), display)
         overlay = OverlayView(this).apply { debugEnabled = BuildConfig.DEBUG }
         root.addView(host, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         root.addView(overlay, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         setContentView(root)
+        overlay.setStatus("Rokid Mirror starting…")
+        overlay.setInfo("v${ReceiverApplication.VERSION}  ${display.width}x${display.height} @${display.densityDpi}dpi ${display.refreshHz}Hz")
+        app.consumeLastCrash()?.let { overlay.setWarning("Previous crash: $it") }
+        runCatching { platform.setKeepAwake(true) }
+        runCatching { hideSystemBars() }
 
-        decoder = MediaCodecVideoDecoder(stats, onError = { msg -> session.onDecoderError(msg) })
-        val probe = PlatformCapabilities.probeDecoder()
-        val capabilities = PlatformCapabilities.capabilities(display, platform.describe(), platform.getInputCapabilities(), platform.getSensorCapabilities(), probe)
-        ReceiverLog.i(TAG, "platform", "model" to platform.describe().model, "os" to platform.describe().os, "display" to "${display.width}x${display.height}@${display.refreshHz}", "decoder" to probe?.name, "hw" to probe?.hardwareAccelerated, "lowLatency" to probe?.lowLatency, "maxDecode" to capabilities.maxDecode)
+        // Step 2: everything that touches codecs, sockets or optional services.
+        try {
+            decoder = MediaCodecVideoDecoder(stats, onError = { msg -> session.onDecoderError(msg) })
+            val probe = PlatformCapabilities.probeDecoder()
+            val platformInfo = platform.describe()
+            val sensors = platform.getSensorCapabilities()
+            val capabilities = PlatformCapabilities.capabilities(display, platformInfo, platform.getInputCapabilities(), sensors, probe)
+            ReceiverLog.i(TAG, "platform", "model" to platformInfo.model, "os" to platformInfo.os, "abi" to platformInfo.abi,
+                "display" to "${display.width}x${display.height}@${display.refreshHz}", "decoder" to probe?.name,
+                "hw" to probe?.hardwareAccelerated, "lowLatency" to probe?.lowLatency, "maxDecode" to capabilities.maxDecode,
+                "sensors" to sensors, "input" to platform.getInputCapabilities())
 
-        transport = ReceiverTransport(app.identity, app.credentials, { capabilities }, transportListener)
-        session = ReceiverSession(
-            platform = platform,
-            surface = surfaceBridge, decoder = decoderBridge, transport = transportBridge, overlay = overlayBridge,
-            stats = stats, scope = scope, debugOverlay = BuildConfig.DEBUG,
-            onForgetAllSenders = { app.credentials.forgetAll() },
-        )
-        renderer.onSurfaceReady = { holder -> surfaceHolder = holder; pendingFormat?.let { decoder.configure(it, holder.surface) } }
-        renderer.onSurfaceLost = { surfaceHolder = null; decoder.stop() }
-        advertiser = NsdAdvertiser(this)
+            transport = ReceiverTransport(app.identity, app.credentials, { capabilities }, transportListener)
+            session = ReceiverSession(
+                platform = platform,
+                surface = surfaceBridge, decoder = decoderBridge, transport = transportBridge, overlay = overlayBridge,
+                stats = stats, scope = scope, debugOverlay = BuildConfig.DEBUG,
+                onForgetAllSenders = { app.credentials.forgetAll() },
+            )
+            renderer.onSurfaceReady = { holder -> surfaceHolder = holder; pendingFormat?.let { decoder.configure(it, holder.surface) } }
+            renderer.onSurfaceLost = { surfaceHolder = null; decoder.stop() }
+            advertiser = NsdAdvertiser(this)
+
+            bootInfo = buildString {
+                append("v${ReceiverApplication.VERSION}  ${display.width}x${display.height} @${display.densityDpi}dpi ${display.refreshHz}Hz  api ${platformInfo.apiLevel} ${platformInfo.abi}\n")
+                append(if (probe == null) "NO H.264 DECODER" else "dec ${probe.name.takeLast(22)} hw=${probe.hardwareAccelerated} ll=${probe.lowLatency} max ${capabilities.maxDecode.width}x${capabilities.maxDecode.height}@${capabilities.maxDecode.fps}")
+                append("\nimu=${sensors.rotationVector} sensors=${platform.sensorServiceAvailable}")
+            }
+            overlay.setInfo(bootInfo)
+            if (probe == null) overlay.setWarning("No H.264 decoder exposed to apps")
+            ready = true
+        } catch (t: Throwable) {
+            ReceiverLog.e(TAG, "startup_failed", t)
+            overlay.setStatus("Startup failed")
+            overlay.setWarning("${t.javaClass.simpleName}: ${t.message}".take(200))
+        }
     }
 
     override fun onStart() {
         super.onStart()
+        if (!ready) return
         val app = application as ReceiverApplication
         session.start()
-        runCatching { transport.start() }.onFailure { ReceiverLog.e(TAG, "transport_start_failed", it); overlay.setWarning("Cannot open ports: ${it.message}") }
+        runCatching { transport.start() }
+            .onFailure { ReceiverLog.e(TAG, "transport_start_failed", it); overlay.setWarning("Cannot open ports: ${it.message}") }
         val d = platform.getDisplayInfo()
-        advertiser.start(app.identity.receiverId, app.identity.receiverName, com.rokidmirror.protocol.Protocol.DEFAULT_CONTROL_PORT, d.width, d.height)
+        runCatching { advertiser.start(app.identity.receiverId, app.identity.receiverName, Protocol.DEFAULT_CONTROL_PORT, d.width, d.height) }
+            .onFailure { ReceiverLog.e(TAG, "advertise_failed", it) }
+        ipInfo = localAddresses()
+        overlay.setInfo("$bootInfo\ntcp ${Protocol.DEFAULT_CONTROL_PORT} udp ${Protocol.DEFAULT_VIDEO_PORT}  mdns=${advertiser.available}\n$ipInfo")
+        ReceiverLog.i(TAG, "ready", "addresses" to ipInfo, "mdns" to advertiser.available)
     }
 
     override fun onStop() {
-        advertiser.stop()
-        transport.stop()
-        session.stop()
+        if (ready) {
+            advertiser.stop()
+            transport.stop()
+            session.stop()
+        }
         super.onStop()
     }
+
+    /** Shown on the glasses so the phone can connect by IP even when discovery does not work. */
+    private fun localAddresses(): String = runCatching {
+        java.net.NetworkInterface.getNetworkInterfaces().toList()
+            .filter { it.isUp && !it.isLoopback }
+            .flatMap { ni -> ni.inetAddresses.toList().filterIsInstance<java.net.Inet4Address>().map { "${ni.name} ${it.hostAddress}" } }
+            .joinToString("  ").ifBlank { "no IPv4 address (not on Wi-Fi?)" }
+    }.getOrElse { "address unknown" }
 
     override fun onDestroy() { scope.cancel(); super.onDestroy() }
 
@@ -135,6 +194,7 @@ class ReceiverActivity : Activity() {
 
     private val surfaceBridge = object : SessionSurface {
         override fun setSource(width: Int, height: Int) = renderer.setSource(width, height)
+        override fun hideVideo() = renderer.hideVideo()
         override fun setViewport(state: ViewportState) = renderer.setViewport(state)
         override val currentViewport: ViewportState get() = renderer.viewport
         override val sourceWidth: Int get() = renderer.sourceWidth
@@ -169,6 +229,7 @@ class ReceiverActivity : Activity() {
 
     private val overlayBridge = object : SessionOverlay {
         override fun setStatus(text: String) { overlay.setStatus(text) }
+        override fun setInfo(text: String) { overlay.setInfo(text) }
         override fun showPairingCode(formatted: String?) { overlay.showPairingCode(formatted) }
         override fun setWarning(text: String?) { overlay.setWarning(text) }
         override fun setDebug(text: String?) { overlay.setDebug(text) }
