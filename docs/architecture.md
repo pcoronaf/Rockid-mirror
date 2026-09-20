@@ -81,3 +81,5 @@ Galaxy S25 (android-sender)                              Rokid Glasses (rokid-re
 | H.264 only | Decoder compatibility; HEVC only after receiver capability is proven (spec). | `VideoCodec.H265` is already in the enum/negotiation. |
 | Bitwise commit/reveal pairing | PAKE-grade resistance to on-path attackers with only JCA primitives available on API 32 (no X25519, no group ops). | SPAKE2 if a vetted library is adopted later. |
 | Keystore-wrapped credentials, no security-crypto lib | One fewer dependency; same guarantee. | — |
+| Mouse mode clicks via a gesture-only accessibility service | The only no-root way to tap another app; configured with no event subscriptions and no content access. | Cursor-only mode when the service is off. |
+| Cursor drawn by the receiver overlay | No bandwidth, crisp at any zoom, and no SYSTEM_ALERT_WINDOW permission on the phone. | Overlay window on the phone if the cursor must appear in recordings. |

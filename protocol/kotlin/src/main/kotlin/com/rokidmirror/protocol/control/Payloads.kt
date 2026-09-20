@@ -180,4 +180,17 @@ object Payloads {
 
     @Serializable
     data class Goodbye(val reason: String = "")
+
+    /**
+     * Remote pointer (mouse mode). Coordinates are normalized to the captured source frame, so
+     * the receiver can place the cursor whatever the current zoom or pan is. Sent by the phone
+     * only while mouse mode is on; `visible = false` removes the cursor.
+     */
+    @Serializable
+    data class Pointer(
+        val x: Float,
+        val y: Float,
+        val visible: Boolean = true,
+        val pressed: Boolean = false,
+    )
 }

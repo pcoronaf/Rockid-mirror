@@ -77,6 +77,13 @@ From community and vendor documentation (details and sources in `docs/rokid-sdk-
 5. Use Fit / Fill / 100% / Zoom, the sliders or the control surface (drag = pan, pinch = zoom,
    double tap = Fit) to make small text readable on the 480×640 display. Save the view as a
    profile. **Test pattern** streams a synthetic source without capture consent (development).
+6. Switch the pad to **Mouse** to drive a cursor over the mirrored screen: drag moves it, tap
+   clicks, long press holds, two fingers scroll, and Back / Home / Recents are one button each.
+   Clicks need the *Rokid Mirror pointer* accessibility service, which the app offers to open in
+   Settings; without it the cursor still moves so you can point at things. Clicks require
+   whole-screen mirroring. See `docs/security.md` for exactly what that service can and cannot do.
+7. On the glasses, **double tap the temple** to exit, as in other Rokid apps. A single tap toggles
+   Fit and readable zoom, swipes step the zoom, and a long press recenters.
 6. *Diagnostics* shows and exports the sanitized latency/quality report.
 
 ## Security summary

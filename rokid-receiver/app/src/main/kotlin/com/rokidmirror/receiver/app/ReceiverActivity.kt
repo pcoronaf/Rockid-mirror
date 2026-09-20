@@ -114,6 +114,7 @@ class ReceiverActivity : Activity() {
                 surface = surfaceBridge, decoder = decoderBridge, transport = transportBridge, overlay = overlayBridge,
                 stats = stats, scope = scope, debugOverlay = BuildConfig.DEBUG,
                 onForgetAllSenders = { app.credentials.forgetAll() },
+                onExitRequested = { runOnUiThread { ReceiverLog.i(TAG, "exit_on_double_tap"); finish() } },
             )
             renderer.onSurfaceReady = { holder ->
                 surfaceHolder = holder
@@ -176,6 +177,10 @@ class ReceiverActivity : Activity() {
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean = platform.onKeyEvent(event) || super.dispatchKeyEvent(event)
 
+    /** The temple bar may report taps as touches rather than key events; both reach the adapter. */
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean =
+        platform.onTouchEvent(event) || super.dispatchTouchEvent(event)
+
     private fun hideSystemBars() {
         window.insetsController?.let {
             it.hide(WindowInsets.Type.systemBars())
@@ -201,6 +206,7 @@ class ReceiverActivity : Activity() {
     private val surfaceBridge = object : SessionSurface {
         override fun setSource(width: Int, height: Int) = renderer.setSource(width, height)
         override fun hideVideo() = renderer.hideVideo()
+        override fun sourceToDisplay(nx: Float, ny: Float): Pair<Float, Float>? = renderer.sourceToDisplay(nx, ny)
         override fun setViewport(state: ViewportState) = renderer.setViewport(state)
         override val currentViewport: ViewportState get() = renderer.viewport
         override val sourceWidth: Int get() = renderer.sourceWidth
@@ -237,6 +243,7 @@ class ReceiverActivity : Activity() {
     private val overlayBridge = object : SessionOverlay {
         override fun setStatus(text: String) { overlay.setStatus(text) }
         override fun setInfo(text: String) { overlay.setInfo(text) }
+        override fun setPointer(x: Float?, y: Float?, pressed: Boolean) { overlay.setPointer(x, y, pressed) }
         override fun showPairingCode(formatted: String?) { overlay.showPairingCode(formatted) }
         override fun setWarning(text: String?) { overlay.setWarning(text) }
         override fun setDebug(text: String?) { overlay.setDebug(text) }

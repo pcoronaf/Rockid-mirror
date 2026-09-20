@@ -28,6 +28,8 @@ import java.util.Base64
 /** Receiver-side abstractions the session drives; implemented by renderer/decoder/transport modules. */
 interface SessionSurface {
     fun setSource(width: Int, height: Int)
+    /** Normalized source coordinates to display pixels, or null when nothing is shown. */
+    fun sourceToDisplay(nx: Float, ny: Float): Pair<Float, Float>?
     /** Hide the video surface so the overlay is unobstructed while nothing is streaming. */
     fun hideVideo()
     fun setViewport(state: ViewportState)
@@ -65,6 +67,7 @@ interface SessionTransport {
 interface SessionOverlay {
     fun setStatus(text: String)
     fun setInfo(text: String)
+    fun setPointer(x: Float?, y: Float?, pressed: Boolean)
     fun showPairingCode(formatted: String?)
     fun setWarning(text: String?)
     fun setDebug(text: String?)
@@ -86,6 +89,8 @@ class ReceiverSession(
     private val scope: CoroutineScope,
     private val debugOverlay: Boolean,
     private val onForgetAllSenders: () -> Unit,
+    /** Double tap on the temple bar leaves the app, matching other Rokid apps. */
+    private val onExitRequested: () -> Unit = {},
     private val clockNs: () -> Long = System::nanoTime,
 ) {
     private companion object { const val TAG = "Session"; const val KEYFRAME_REQUEST_MIN_INTERVAL_NS = 300_000_000L }
@@ -100,6 +105,7 @@ class ReceiverSession(
     private var statsJob: Job? = null
     private var headJob: Job? = null
     private var baseViewport = ViewportState()
+    private var pointerVisible = false
     private var framesSubmitted = 0L
     private var framesDroppedByDecoder = 0L
     val head = HeadViewportController(enabled = false)
@@ -145,6 +151,8 @@ class ReceiverSession(
     fun onDisconnected(reason: String) {
         decoder.stop()
         surface.hideVideo()
+        overlay.setPointer(null, null, false)
+        pointerVisible = false
         streamFormat = null
         framesSubmitted = 0
         overlay.showPairingCode(null)
@@ -167,6 +175,7 @@ class ReceiverSession(
             MessageType.STREAM_STOP -> {
                 decoder.stop(); streamFormat = null
                 surface.hideVideo()
+                overlay.setPointer(null, null, false); pointerVisible = false
                 overlay.setStreamingIndicator(false)
                 enter(State.CONNECTED)
             }
@@ -175,6 +184,12 @@ class ReceiverSession(
                 baseViewport = ViewportState(v.scale, v.centerX, v.centerY, FitMode.fromWire(v.fitMode))
                 head.setBase(baseViewport)
                 surface.setViewport(baseViewport)
+            }
+            MessageType.POINTER -> {
+                val p = ControlCodec.payloadOf(m, Payloads.Pointer.serializer())
+                pointerVisible = p.visible
+                if (!p.visible) overlay.setPointer(null, null, false)
+                else surface.sourceToDisplay(p.x, p.y)?.let { (x, y) -> overlay.setPointer(x, y, p.pressed) }
             }
             MessageType.PROFILE_SET -> {
                 val p = ControlCodec.payloadOf(m, Payloads.ProfileSet.serializer())
@@ -256,6 +271,7 @@ class ReceiverSession(
         ReceiverLog.d(TAG, "input", "type" to input::class.simpleName)
         when (input) {
             GlassesInput.Select -> toggleFitZoom()
+            GlassesInput.DoubleTap -> { overlay.setHint("Closing…"); onExitRequested() }
             GlassesInput.Forward -> stepZoom(1.25f)
             GlassesInput.Backward -> stepZoom(0.8f)
             GlassesInput.LongPress -> { head.recenter(); surface.setViewport(baseViewport); overlay.setHint("Recentered"); scope.launch { delay(1200); overlay.setHint(null) } }
@@ -298,7 +314,7 @@ class ReceiverSession(
         overlay.setStatus(status)
         overlay.setStreamingIndicator(next == State.STREAMING)
         if (next != State.STREAMING) overlay.setDebug(null)
-        if (next == State.ADVERTISING) overlay.setHint("Open Rokid Mirror on the phone")
+        if (next == State.ADVERTISING) overlay.setHint("Open Rokid Mirror on the phone · double tap the temple to exit")
         if (next == State.CONNECTED || next == State.STREAMING) overlay.setHint(null)
     }
 

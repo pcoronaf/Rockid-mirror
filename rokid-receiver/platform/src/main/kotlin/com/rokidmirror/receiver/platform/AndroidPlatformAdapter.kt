@@ -6,6 +6,9 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.view.MotionEvent
 import android.view.KeyEvent
 import android.view.SurfaceView
 import android.view.WindowManager
@@ -28,9 +31,19 @@ import kotlin.math.atan2
  * key code it receives so the audit can record the real values.
  */
 class AndroidPlatformAdapter(private val activity: Activity) : RokidPlatformAdapter {
-    private companion object { const val TAG = "Platform" }
+    private companion object {
+        const val TAG = "Platform"
+        const val DOUBLE_TAP_WINDOW_MS = 320L
+        const val TAP_MAX_MS = 250L
+        val TAP_KEYCODES = setOf(
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_BUTTON_A,
+        )
+    }
 
     private val inputs = MutableSharedFlow<GlassesInput>(extraBufferCapacity = 16)
+    private val tapHandler = Handler(Looper.getMainLooper())
+    private val tapDetector = TapDetector(DOUBLE_TAP_WINDOW_MS)
+    private var pendingSingleTap: Runnable? = null
     // Optional: a stripped-down glasses runtime may not expose every system service.
     private val sensorManager = runCatching { activity.getSystemService(Activity.SENSOR_SERVICE) as? SensorManager }.getOrNull()
 
@@ -60,6 +73,42 @@ class AndroidPlatformAdapter(private val activity: Activity) : RokidPlatformAdap
 
     override fun getInputCapabilities() = InputCapabilities(touchBar = Support.UNVERIFIED, hardwareKeys = Support.UNVERIFIED)
 
+    /**
+     * A tap is only delivered after [DOUBLE_TAP_WINDOW_MS] so that the first tap of a double tap
+     * does not also act. Other Rokid apps exit on a double tap and users expect that here too.
+     */
+    private fun onTap() {
+        when (tapDetector.onTap(android.os.SystemClock.uptimeMillis())) {
+            TapDetector.Decision.DOUBLE -> {
+                pendingSingleTap?.let { tapHandler.removeCallbacks(it) }
+                pendingSingleTap = null
+                ReceiverLog.i(TAG, "double_tap")
+                inputs.tryEmit(GlassesInput.DoubleTap)
+            }
+            TapDetector.Decision.ARM_SINGLE -> {
+                val runnable = Runnable {
+                    pendingSingleTap = null
+                    if (tapDetector.onTimer()) inputs.tryEmit(GlassesInput.Select)
+                }
+                pendingSingleTap = runnable
+                tapHandler.postDelayed(runnable, DOUBLE_TAP_WINDOW_MS)
+            }
+        }
+    }
+
+    /**
+     * Forward from `Activity.dispatchTouchEvent`. If the temple bar reports taps as touches
+     * rather than key events, double tap to exit still works.
+     */
+    fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.action == MotionEvent.ACTION_UP && event.eventTime - event.downTime < TAP_MAX_MS) {
+            ReceiverLog.d(TAG, "touch_tap", "x" to event.x.toInt(), "y" to event.y.toInt())
+            onTap()
+            return true
+        }
+        return false
+    }
+
     override fun getSensorCapabilities(): SensorCapabilities = SensorCapabilities(
         rotationVector = if (rotationSensor() != null) Support.UNVERIFIED else Support.UNAVAILABLE,
         gyroscope = if (sensorManager?.getDefaultSensor(Sensor.TYPE_GYROSCOPE) != null) Support.UNVERIFIED else Support.UNAVAILABLE,
@@ -79,6 +128,10 @@ class AndroidPlatformAdapter(private val activity: Activity) : RokidPlatformAdap
     fun onKeyEvent(event: KeyEvent): Boolean {
         ReceiverLog.d(TAG, "key_event", "code" to event.keyCode, "action" to event.action, "repeat" to event.repeatCount, "long" to event.isLongPress)
         if (event.action != KeyEvent.ACTION_UP && !(event.action == KeyEvent.ACTION_DOWN && event.isLongPress)) return event.keyCode != KeyEvent.KEYCODE_BACK
+        if (!event.isLongPress && event.keyCode in TAP_KEYCODES) {
+            onTap()
+            return true
+        }
         val input = when (event.keyCode) {
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_BUTTON_A ->
                 if (event.isLongPress) GlassesInput.LongPress else GlassesInput.Select

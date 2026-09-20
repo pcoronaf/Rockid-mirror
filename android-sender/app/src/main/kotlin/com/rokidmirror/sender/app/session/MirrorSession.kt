@@ -18,6 +18,7 @@ import com.rokidmirror.protocol.control.MirrorException
 import com.rokidmirror.protocol.control.Payloads
 import com.rokidmirror.protocol.viewport.ViewportState
 import com.rokidmirror.sender.app.AppContainer
+import com.rokidmirror.sender.app.PointerService
 import com.rokidmirror.sender.capture.CaptureEvent
 import com.rokidmirror.sender.capture.CaptureGeometry
 import com.rokidmirror.sender.capture.CaptureGeometryPlanner
@@ -27,6 +28,7 @@ import com.rokidmirror.sender.control.SenderEvent
 import com.rokidmirror.sender.control.SenderState
 import com.rokidmirror.sender.control.SenderStateMachine
 import com.rokidmirror.sender.control.ViewProfile
+import com.rokidmirror.sender.control.PointerController
 import com.rokidmirror.sender.control.ViewportController
 import com.rokidmirror.sender.discovery.DiscoveredReceiver
 import com.rokidmirror.sender.encoder.EncoderCapabilities
@@ -89,6 +91,13 @@ class MirrorSession(private val context: Context, private val container: AppCont
 
     val viewport = ViewportController { scheduleViewportSend(it) }
 
+    /** Mouse mode: the control pad drives a cursor over the mirrored frame instead of the viewport. */
+    private val _mouseMode = MutableStateFlow(false)
+    val mouseMode: StateFlow<Boolean> = _mouseMode.asStateFlow()
+    val pointer = PointerController()
+    private val _pointerPosition = MutableStateFlow(0.5f to 0.5f)
+    val pointerPosition: StateFlow<Pair<Float, Float>> = _pointerPosition.asStateFlow()
+
     private val transport = LanStreamTransport(container.identity)
     private val capture = MediaProjectionCaptureController(context)
     private val latency = LatencyTracker()
@@ -107,6 +116,10 @@ class MirrorSession(private val context: Context, private val container: AppCont
     private var reconnectJob: Job? = null
     private var viewportJob: Job? = null
     private var pendingViewport: ViewportState? = null
+    private var pointerJob: Job? = null
+    private var pendingPointerSend = false
+    /** Screen geometry captured at stream start; injection needs source == whole display. */
+    private var captureDisplayGeometry: CaptureGeometry? = null
     private var userDisconnect = false
 
     private var encoderConfig: EncoderConfig? = null
@@ -267,6 +280,9 @@ class MirrorSession(private val context: Context, private val container: AppCont
         streamParams = params
         lastStreamParams = params
         sourceGeometry = source
+        captureDisplayGeometry = displayGeometry()
+        pointer.sourceWidth = source.width
+        pointer.sourceHeight = source.height
         negotiatedLongEdge = maxOf(params.width, params.height)
         resolutionStep = 0
         val cfg = EncoderConfig(width = params.width, height = params.height, fps = params.fps, bitrate = params.bitrate)
@@ -303,6 +319,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
             runCatching { encoder.stop() }
             if (transport.state.value is TransportState.Connected) runCatching { transport.send(MessageType.STREAM_STOP, Payloads.StreamStop.serializer(), Payloads.StreamStop(reason)) }
             encoderConfig = null; streamParams = null; adaptive = null
+            if (_mouseMode.value) { _mouseMode.value = false; runCatching { sendPointerNow() } }
             _info.update { it.copy(stream = null, sourceName = "") }
             event("Stream stopped ($reason)")
         }
@@ -344,6 +361,8 @@ class MirrorSession(private val context: Context, private val container: AppCont
         sendStreamFormatIfChanged(force = true)
         sendViewportNow(viewport.state.value)
         _info.update { it.copy(sourceWidth = width, sourceHeight = height) }
+        pointer.sourceWidth = width
+        pointer.sourceHeight = height
         event("Content resized to ${width}x$height")
     }
 
@@ -417,6 +436,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
         transport.send(MessageType.STREAM_START, Payloads.StreamStart.serializer(), Payloads.StreamStart(params.codec.wireName, params.width, params.height, params.fps, params.bitrate, params.preset.wireName, _info.value.sourceName, transport.sessionShortId))
         sendStreamFormatIfChanged(force = true)
         sendViewportNow(viewport.state.value)
+        sendPointerNow()
         encoder.requestKeyFrame()
     }
 
@@ -526,6 +546,83 @@ class MirrorSession(private val context: Context, private val container: AppCont
     }
 
     fun requestKeyframe() = encoder.requestKeyFrame()
+
+    // ---- mouse mode ---------------------------------------------------------------------
+
+    /**
+     * Touch injection needs the cursor's frame coordinates to be phone screen coordinates, which
+     * holds only when the whole display is being captured. With a single app captured, Android
+     * gives no way to map the window back to screen coordinates, so taps stay disabled.
+     */
+    val pointerInjectionAvailable: Boolean
+        get() {
+            val src = sourceGeometry ?: return false
+            val disp = captureDisplayGeometry ?: return false
+            return src.width == disp.width && src.height == disp.height
+        }
+
+    val pointerServiceEnabled: Boolean get() = PointerService.isRunning()
+
+    fun setMouseMode(enabled: Boolean) {
+        if (_mouseMode.value == enabled) return
+        _mouseMode.value = enabled
+        if (enabled) {
+            sourceGeometry?.let { pointer.sourceWidth = it.width; pointer.sourceHeight = it.height }
+            pointer.reset()
+            _pointerPosition.value = pointer.position.x to pointer.position.y
+            event("Mouse mode on" + if (!pointerInjectionAvailable) " (pointer only: not a whole-screen capture)" else "")
+        } else {
+            event("Mouse mode off")
+        }
+        schedulePointerSend()
+    }
+
+    fun movePointer(dxPadFraction: Float, dyPadFraction: Float) {
+        if (!_mouseMode.value) return
+        val p = pointer.moveBy(dxPadFraction, dyPadFraction)
+        _pointerPosition.value = p.x to p.y
+        schedulePointerSend()
+    }
+
+    fun pointerTap() = withInjector("tap") { svc, x, y -> svc.tap(x, y) }
+    fun pointerLongPress() = withInjector("long press") { svc, x, y -> svc.longPress(x, y) }
+    fun pointerScroll(dxPixels: Float, dyPixels: Float) = withInjector("scroll") { svc, x, y -> svc.scroll(x, y, dxPixels, dyPixels) }
+    fun pointerBack() = withInjector("back") { svc, _, _ -> svc.back() }
+    fun pointerHome() = withInjector("home") { svc, _, _ -> svc.home() }
+    fun pointerRecents() = withInjector("recents") { svc, _, _ -> svc.recents() }
+
+    private fun withInjector(what: String, block: (PointerService, Float, Float) -> Unit) {
+        val svc = PointerService.instance
+        if (svc == null) { event("Pointer service is off; enable it in Accessibility settings"); return }
+        if (!pointerInjectionAvailable && what != "back" && what != "home" && what != "recents") {
+            event("Cannot $what: mouse mode needs whole-screen mirroring")
+            return
+        }
+        val (px, py) = pointer.toSourcePixels()
+        block(svc, px.toFloat(), py.toFloat())
+        // A click usually changes what is on screen; show it immediately rather than at the next IDR.
+        if (what == "tap" || what == "long press" || what == "back" || what == "home" || what == "recents") encoder.requestKeyFrame()
+    }
+
+    private fun schedulePointerSend() {
+        pendingPointerSend = true
+        if (pointerJob?.isActive == true) return
+        pointerJob = scope.launch {
+            while (pendingPointerSend) {
+                pendingPointerSend = false
+                sendPointerNow()
+                delay(VIEWPORT_SEND_INTERVAL_MS)
+            }
+        }
+    }
+
+    private suspend fun sendPointerNow() {
+        if (transport.state.value !is TransportState.Connected) return
+        val p = pointer.position
+        runCatching {
+            transport.send(MessageType.POINTER, Payloads.Pointer.serializer(), Payloads.Pointer(p.x, p.y, visible = _mouseMode.value))
+        }
+    }
 
     /** True while the control channel to a receiver is established. */
     val isConnected: Boolean get() = transport.state.value is TransportState.Connected

@@ -16,6 +16,28 @@ Screen content is sensitive. Release requirements from the specification and how
 | Stop when Android ends the projection | `MediaProjection.Callback.onStop` → immediate teardown, `STREAM_STOP`, UI to Ready |
 | No FLAG_SECURE / DRM bypass | Not implemented; Android blanks protected content in the VirtualDisplay and the app never reads pixels |
 
+## Mouse mode and touch injection
+
+Mouse mode lets the control pad click on the phone while the wearer looks at the glasses. Android
+gives a no-root app exactly one way to deliver a tap to another app: an accessibility service with
+gesture dispatch. `PointerService` is the smallest possible one.
+
+* Its config requests **no accessibility event types** and sets `canRetrieveWindowContent="false"`,
+  so it cannot read the screen, its text, or what is typed. `onAccessibilityEvent` is empty and
+  nothing in the class inspects the UI.
+* It only replays gestures the user just made on the phone's own control pad, plus the Back, Home
+  and Recents global actions. It never acts on its own.
+* The user must enable it by hand in Accessibility settings; the app cannot grant it, and mouse
+  mode works as a pointer (cursor only, no clicks) when it is off.
+* Injection is refused unless the whole screen is being captured, because with a single captured
+  app the cursor cannot be mapped to real screen coordinates.
+* The cursor is drawn by the glasses overlay, not composited into the captured video, so it costs
+  no bandwidth and never appears in the encoded stream.
+
+This is a deliberate departure from the v0.1 non-goal "remote touch injection into arbitrary
+Android apps", made at the product owner's request, and it is opt-in twice over: the user enables
+the service, then switches the pad to Mouse.
+
 ## Threat model notes
 * Passive LAN sniffing: sees ports, packet sizes/timing and the cleartext 40-byte headers (frame
   ids, timestamps), not content.

@@ -44,6 +44,15 @@ class ViewportRenderer(private val host: FrameLayout, target: RenderTarget, disp
         })
     }
 
+    /**
+     * Where a point given in normalized captured-source coordinates currently sits on the
+     * glasses display, honouring zoom and pan. Null when nothing is being displayed.
+     */
+    fun sourceToDisplay(nx: Float, ny: Float): Pair<Float, Float>? {
+        val p = lastPlacement ?: return null
+        return (p.left + nx * p.width) to (p.top + ny * p.height)
+    }
+
     fun setDisplaySize(width: Int, height: Int) { displayWidth = width; displayHeight = height; apply() }
 
     /** New source geometry (STREAM_FORMAT); recenters as the specification requires. */

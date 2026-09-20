@@ -47,6 +47,8 @@ R → S  CAPABILITIES   display, codecs, maxDecode, input, model/os            (
 S → R  STREAM_START   codec, w, h, fps, bitrate, preset, sourceName, sessionShortId
 S → R  STREAM_FORMAT  codec, w, h, fps, csd0/csd1 (base64 SPS/PPS), sourceW/H, rotation   (re-sent on change)
 S → R  VIEWPORT_SET / PROFILE_SET                                             (throttled to 25 Hz)
+S → R  POINTER        {x, y, visible, pressed}  mouse-mode cursor in normalized source coords,
+                      throttled to 25 Hz; the receiver draws it in its overlay
 both   PING {sentNs} / PONG {sentNs, receiverNs}  every 1 s → RTT + clock offset (ClockSync)
 R → S  STATS          every 1 s (see payloads.md)
 R → S  KEYFRAME_REQUEST after loss / decoder drop / reconfigure (rate-limited 300 ms)
@@ -77,5 +79,7 @@ unit = one frame (SPS+PPS+IDR for keyframes). Fragments are 1344 bytes of plaint
 ## Compatibility policy
 
 `protocolVersion` is checked on every message and every datagram. Fields are added with defaults
-and never change meaning; unknown fields are ignored (`ignoreUnknownKeys`). Anything else bumps
-the version, and a mismatch yields `ERROR PROTOCOL_VERSION_MISMATCH` before any video flows.
+and never change meaning; unknown fields are ignored (`ignoreUnknownKeys`) and an unrecognised
+`type` decodes to `MessageType.UNKNOWN` and is skipped, so a peer can add message types without
+breaking older builds. Anything else bumps the version, and a mismatch yields
+`ERROR PROTOCOL_VERSION_MISMATCH` before any video flows.

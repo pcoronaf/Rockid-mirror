@@ -27,6 +27,8 @@ class RenderTarget(val surfaceView: SurfaceView)
 /** Discrete input gestures the receiver understands. */
 sealed class GlassesInput {
     object Select : GlassesInput()
+    /** Two taps in quick succession on the temple touch bar; Rokid apps use it to exit. */
+    object DoubleTap : GlassesInput()
     object Back : GlassesInput()
     object Forward : GlassesInput()
     object Backward : GlassesInput()

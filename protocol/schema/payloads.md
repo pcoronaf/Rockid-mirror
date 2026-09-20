@@ -20,3 +20,6 @@ All fields added after v1 must be optional with defaults. Binary fields are base
 | STATS | R→S | packetsReceived, packetsLost, framesDelivered, framesDropped, framesDecoded, decodeLagFrames, reassemblyMs, decodeMs, renderMs, networkMs, fps, bitrateBps, clockOffsetNs |
 | ERROR | both | code (ErrorCode name), message, recoverable |
 | GOODBYE | both | reason |
+| POINTER | S→R | x, y (normalized to the captured source frame), visible, pressed |
+
+An unrecognised `type` decodes to `UNKNOWN` and is ignored rather than failing the session.

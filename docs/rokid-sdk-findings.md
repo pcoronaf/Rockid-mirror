@@ -54,6 +54,11 @@ https://global.rokid.com/blogs/news (launch specs). Re-check vendor docs when wo
 - [ ] Confirm API level, display size and refresh rate (first-launch log line `RokidRecv/Activity platform`).
 - [ ] Confirm H.264 decoder name, `isHardwareAccelerated`, low-latency feature, sustained 480p30 then 720p30.
 - [ ] Record temple touch bar key codes and fix the mapping in `AndroidPlatformAdapter.onKeyEvent`.
+      The app now treats DPAD_CENTER / ENTER / NUMPAD_ENTER / BUTTON_A as a tap and detects a
+      double tap from two of them within 320 ms (`TapDetector`), which exits the app. Taps that
+      arrive as touch events instead are handled through `dispatchTouchEvent`. Whichever path the
+      RV101/RV102 actually uses, the raw codes are logged as `RokidRecv/Platform key_event` and
+      `touch_tap`: confirm and narrow the set.
 - [ ] Confirm `SensorManager` rotation vector availability (head-controlled viewport is off by default).
 - [ ] Confirm `NsdManager` registration works on YodaOS-Sprite (fallback: manual IP on the phone).
 - [ ] Confirm the SurfaceView can be laid out larger than the display (fallback: TextureView + matrix).

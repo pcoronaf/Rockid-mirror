@@ -60,3 +60,25 @@ class ControlCodecTest {
         }
     }
 }
+
+/** Forward compatibility: a message type added by a newer peer must not break this build. */
+class UnknownMessageTypeTest {
+    @Test
+    fun unknownTypeDecodesToUnknownInsteadOfThrowing() {
+        val json = """{"protocolVersion":1,"type":"SOMETHING_NEW","sessionId":"s","sequence":9,"timestampNs":1,"payload":{"a":1}}"""
+        val msg = ControlCodec.decode(json.encodeToByteArray())
+        assertEquals(MessageType.UNKNOWN, msg.type)
+        assertEquals(9L, msg.sequence)
+    }
+
+    @Test
+    fun pointerRoundTrips() {
+        val factory = MessageFactory("s") { 0 }
+        val m = factory.create(MessageType.POINTER, Payloads.Pointer.serializer(), Payloads.Pointer(0.25f, 0.75f, visible = true, pressed = true))
+        val decoded = ControlCodec.decode(ControlCodec.encode(m))
+        assertEquals(MessageType.POINTER, decoded.type)
+        val p = ControlCodec.payloadOf(decoded, Payloads.Pointer.serializer())
+        assertEquals(0.25f, p.x, 0f)
+        assertTrue(p.pressed)
+    }
+}

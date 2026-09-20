@@ -12,7 +12,16 @@ import kotlinx.serialization.json.jsonObject
 enum class MessageType {
     HELLO, HELLO_ACK, PAIR_REQUEST, PAIR_CONFIRM, CAPABILITIES,
     STREAM_START, STREAM_STOP, STREAM_FORMAT, VIEWPORT_SET, PROFILE_SET,
-    KEYFRAME_REQUEST, PING, PONG, STATS, ERROR, GOODBYE;
+    KEYFRAME_REQUEST, PING, PONG, STATS, ERROR, GOODBYE,
+
+    /** Remote pointer position and button state for mouse mode. */
+    POINTER,
+
+    /**
+     * A type this build does not know. Messages added by a newer peer decode to this and are
+     * ignored instead of failing the session, so new message types stay backward compatible.
+     */
+    UNKNOWN;
 }
 
 /**
@@ -22,7 +31,7 @@ enum class MessageType {
 @Serializable
 data class ControlMessage(
     val protocolVersion: Int = Protocol.PROTOCOL_VERSION,
-    val type: MessageType,
+    val type: MessageType = MessageType.UNKNOWN,
     val sessionId: String,
     val sequence: Long,
     val timestampNs: Long,
@@ -35,6 +44,8 @@ object ControlCodec {
         ignoreUnknownKeys = true
         encodeDefaults = true
         explicitNulls = false
+        // An unrecognised `type` becomes MessageType.UNKNOWN rather than an error.
+        coerceInputValues = true
     }
 
     fun encode(message: ControlMessage): ByteArray = json.encodeToString(ControlMessage.serializer(), message).encodeToByteArray()

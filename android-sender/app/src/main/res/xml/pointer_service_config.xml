@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Minimum-privilege accessibility service: it dispatches gestures and nothing else.
+  accessibilityEventTypes is deliberately absent, so the service subscribes to NO events, and
+  canRetrieveWindowContent is false, so it can never read the screen, its text, or what is typed.
+  See docs/security.md.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:canPerformGestures="true"
+    android:canRetrieveWindowContent="false"
+    android:description="@string/pointer_service_description"
+    android:isAccessibilityTool="true"
+    android:notificationTimeout="0"
+    android:settingsActivity="com.rokidmirror.sender.app.ui.MainActivity" />
