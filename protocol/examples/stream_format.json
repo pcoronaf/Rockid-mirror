@@ -1,0 +1,1 @@
+{"protocolVersion":1,"type":"STREAM_FORMAT","sessionId":"6f1d2b0e-7d5a-4c1e-9f3a-2b8c4d5e6f70","sequence":6,"timestampNs":100200300,"payload":{"codec":"h264","width":576,"height":1280,"fps":30,"csd0":"AAAAAWdCwB6...","csd1":"AAAAAWjOBss=","sourceWidth":1080,"sourceHeight":2340,"rotationDegrees":0}}

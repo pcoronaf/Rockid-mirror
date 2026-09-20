@@ -63,7 +63,6 @@ class ViewportRenderer(private val host: FrameLayout, target: RenderTarget, disp
             lp.leftMargin = p.left.roundToInt()
             lp.topMargin = p.top.roundToInt()
             surfaceView.layoutParams = lp
-            surfaceView.holder.setFixedSize(sourceWidth, sourceHeight)
         }
         ReceiverLog.d(TAG, "placement", "mode" to viewport.fitMode, "scale" to viewport.scale, "w" to p.width.toInt(), "h" to p.height.toInt(), "l" to p.left.toInt(), "t" to p.top.toInt())
     }

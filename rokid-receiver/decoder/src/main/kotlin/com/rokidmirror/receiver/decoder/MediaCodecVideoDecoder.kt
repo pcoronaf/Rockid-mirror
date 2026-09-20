@@ -34,7 +34,11 @@ class MediaCodecVideoDecoder(
     private val machine = DecoderStateMachine()
     private var codec: MediaCodec? = null
     private val inputBuffers = LinkedBlockingQueue<Int>()
-    private val pendingFrameIds = ConcurrentLinkedQueue<Pair<Long, Long>>() // (ptsUs, frameId)
+    private val pendingFrameIds = ConcurrentLinkedQueue<Pair<Long, Long>>() // (ptsUs, frameId) submitted, not yet output
+    /** pts -> frameId of recently output frames, for the (optional) frame-rendered callback; bounded. */
+    private val renderedLookup = object : java.util.LinkedHashMap<Long, Long>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Long>?): Boolean = size > 32
+    }
     private val configured = AtomicBoolean(false)
     var decoderName: String = ""; private set
     var outputWidth = 0; private set
@@ -71,11 +75,14 @@ class MediaCodecVideoDecoder(
                 }
                 c.configure(minimal, surface, null, 0)
             }
-            c.setOnFrameRenderedListener({ _, presentationTimeUs, nanoTime -> stats.onPresented(frameIdFor(presentationTimeUs) ?: -1, nanoTime) }, handler)
+            c.setOnFrameRenderedListener({ _, presentationTimeUs, nanoTime ->
+                val id = synchronized(renderedLookup) { renderedLookup.remove(presentationTimeUs) }
+                if (id != null) stats.onPresented(id, nanoTime)
+            }, handler)
             c.start()
             codec = c
             decoderName = name
-            inputBuffers.clear(); pendingFrameIds.clear()
+            inputBuffers.clear(); pendingFrameIds.clear(); synchronized(renderedLookup) { renderedLookup.clear() }
             machine.onConfigured()
             configured.set(true)
             ReceiverLog.i(TAG, "configured", "decoder" to name, "w" to format.width, "h" to format.height, "csd" to (format.csd0 != null))
@@ -131,6 +138,7 @@ class MediaCodecVideoDecoder(
         stats.reset()
     }
 
+    /** Pops submitted entries up to [ptsUs]; entries the decoder skipped are discarded (bounded queue). */
     private fun frameIdFor(ptsUs: Long): Long? {
         while (true) {
             val head = pendingFrameIds.peek() ?: return null
@@ -147,8 +155,11 @@ class MediaCodecVideoDecoder(
             val render = info.size > 0
             runCatching { codec.releaseOutputBuffer(index, render) }
             if (render) {
-                val frameId = peekFrameId(info.presentationTimeUs)
-                stats.onDecoded(frameId ?: -1, now)
+                val frameId = frameIdFor(info.presentationTimeUs)
+                if (frameId != null) {
+                    synchronized(renderedLookup) { renderedLookup[info.presentationTimeUs] = frameId }
+                    stats.onDecoded(frameId, now)
+                }
             }
         }
 
@@ -163,6 +174,4 @@ class MediaCodecVideoDecoder(
         }
     }
 
-    /** Non-destructive lookup so the frame-rendered listener can still match the same pts. */
-    private fun peekFrameId(ptsUs: Long): Long? = pendingFrameIds.firstOrNull { it.first == ptsUs }?.second
 }

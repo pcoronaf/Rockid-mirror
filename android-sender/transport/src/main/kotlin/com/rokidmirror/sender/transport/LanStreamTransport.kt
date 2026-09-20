@@ -111,24 +111,26 @@ class LanStreamTransport(
             closed.set(false)
             _state.value = TransportState.Connecting(receiver)
             try {
-                val s = Socket().apply { tcpNoDelay = true; soTimeout = 0 }
+                val s = Socket().apply { tcpNoDelay = true; soTimeout = HANDSHAKE_TIMEOUT_MS.toInt() }
                 runInterruptible { s.connect(InetSocketAddress(receiver.host, receiver.controlPort), CONNECT_TIMEOUT_MS) }
                 socket = s
                 input = DataInputStream(BufferedInputStream(s.getInputStream()))
                 output = BufferedOutputStream(s.getOutputStream())
                 withTimeout(HANDSHAKE_TIMEOUT_MS) { handshake(receiver, credential, pairingCodeProvider) }
+                // Receiver pings every second; 5 s of silence means the link is gone.
+                s.soTimeout = Protocol.CONTROL_TIMEOUT_MS.toInt()
                 startBackgroundWork()
                 _state.value = TransportState.Connected(receiver, null)
                 MirrorLog.i(TAG, "connected", "receiver" to receiver.name, "session" to sessionId)
             } catch (e: MirrorException) {
-                failAndClose(e.code, e.details ?: e.message)
+                failAndClose(e.code, e.details ?: e.message, emitEvent = false)
                 throw e
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                failAndClose(ErrorCode.PAIRING_FAILED, "handshake timed out")
+                failAndClose(ErrorCode.PAIRING_FAILED, "handshake timed out", emitEvent = false)
                 throw MirrorException(ErrorCode.PAIRING_FAILED, "handshake timed out", e)
             } catch (e: Exception) {
                 val code = if (e is java.net.ConnectException || e is java.net.SocketTimeoutException || e is java.net.NoRouteToHostException) ErrorCode.RECEIVER_NOT_FOUND else ErrorCode.NETWORK_LOST
-                failAndClose(code, e.message)
+                failAndClose(code, e.message, emitEvent = false)
                 throw MirrorException(code, e.message, e)
             }
         }
@@ -141,7 +143,8 @@ class LanStreamTransport(
         val f = MessageFactory(sid, clockNs).also { factory = it }
         val hs = SenderHandshake(identity, credential, f)
         _state.value = TransportState.Handshaking(receiver, awaitingPairingCode = false)
-        writeFrame(hs.helloWireBytes().let { PreEncoded.wrap(hs.start(), it); it })
+        hs.start()
+        writeFrame(hs.helloWireBytes())
         var encrypted = false
         suspend fun act(out: HandshakeOutput) {
             for (m in out.sendPlain) writeFrame(PreEncoded.bytesOf(m))
@@ -187,13 +190,11 @@ class LanStreamTransport(
 
     private suspend fun readLoop() {
         try {
-            var lastSeen = clockNs()
             while (!closed.get()) {
-                val raw = runInterruptible { Framing.read(input!!) } ?: throw MirrorException(ErrorCode.NETWORK_LOST, "receiver closed the connection")
-                lastSeen = clockNs()
+                val raw = try { runInterruptible { Framing.read(input!!) } } catch (e: java.net.SocketTimeoutException) { throw MirrorException(ErrorCode.NETWORK_LOST, "control timeout") }
+                    ?: throw MirrorException(ErrorCode.NETWORK_LOST, "receiver closed the connection")
                 val msg = ControlCodec.decode(controlCipher!!.open(raw))
                 handle(msg)
-                if (clockNs() - lastSeen > Protocol.CONTROL_TIMEOUT_MS * 1_000_000) throw MirrorException(ErrorCode.NETWORK_LOST, "control timeout")
             }
         } catch (e: MirrorException) {
             if (!closed.get()) { MirrorLog.w(TAG, "link_lost", "code" to e.code, "details" to e.details); failAndClose(e.code, e.details) }
@@ -305,12 +306,12 @@ class LanStreamTransport(
 
     private suspend fun writeFrameQuiet(bytes: ByteArray?) { if (bytes != null) runCatching { writeFrame(bytes) } }
 
-    private suspend fun failAndClose(code: ErrorCode, details: String?) {
+    private suspend fun failAndClose(code: ErrorCode, details: String?, emitEvent: Boolean = true) {
         val wasClosed = closed.getAndSet(true)
         teardown()
         if (!wasClosed) {
             _state.value = TransportState.Failed(endpoint, code, details)
-            _events.tryEmit(TransportEvent.Disconnected(code, details))
+            if (emitEvent) _events.tryEmit(TransportEvent.Disconnected(code, details))
         }
     }
 

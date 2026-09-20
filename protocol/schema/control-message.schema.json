@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rokidmirror.local/schema/control-message-v1.json",
+  "title": "Rokid Mirror control message (protocol version 1)",
+  "description": "Envelope of every message on the TCP control channel. Fields are only ever added; incompatible changes increment protocolVersion.",
+  "type": "object",
+  "required": ["protocolVersion", "type", "sessionId", "sequence", "timestampNs"],
+  "properties": {
+    "protocolVersion": { "const": 1 },
+    "type": { "enum": ["HELLO", "HELLO_ACK", "PAIR_REQUEST", "PAIR_CONFIRM", "CAPABILITIES", "STREAM_START", "STREAM_STOP", "STREAM_FORMAT", "VIEWPORT_SET", "PROFILE_SET", "KEYFRAME_REQUEST", "PING", "PONG", "STATS", "ERROR", "GOODBYE"] },
+    "sessionId": { "type": "string", "description": "UUID chosen by the sender in HELLO; echoed by the receiver." },
+    "sequence": { "type": "integer", "minimum": 1, "description": "Per-direction message counter." },
+    "timestampNs": { "type": "integer", "description": "Sender-local monotonic clock (never wall clock)." },
+    "payload": { "type": "object", "description": "Type-specific payload; see payloads.md" }
+  },
+  "additionalProperties": true
+}

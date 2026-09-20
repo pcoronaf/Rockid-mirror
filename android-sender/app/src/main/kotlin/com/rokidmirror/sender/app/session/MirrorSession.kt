@@ -369,6 +369,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
 
     private fun onLinkLost(code: ErrorCode, details: String?) {
         if (userDisconnect) return
+        if (reconnectJob?.isActive == true) return // attempts inside the reconnect loop report through exceptions
         val ep = endpoint ?: return
         val recoverable = code == ErrorCode.NETWORK_LOST || code == ErrorCode.RECEIVER_NOT_FOUND
         event("Link lost: ${details ?: code.name}")

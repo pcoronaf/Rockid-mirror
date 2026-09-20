@@ -68,13 +68,16 @@ class MirrorService : Service() {
                 scope.launch {
                     runCatching { session.startProjectionStreaming(resultCode, data, label) }
                         .onFailure { MirrorLog.e(TAG, "projection_start_failed", it); stopSelfSafely() }
+                        .onSuccess { watchSession() }
                 }
-                watchSession()
             }
             ACTION_START_SYNTHETIC -> {
                 goForeground()
-                scope.launch { runCatching { session.startSyntheticStreaming() }.onFailure { MirrorLog.e(TAG, "synthetic_start_failed", it); stopSelfSafely() } }
-                watchSession()
+                scope.launch {
+                    runCatching { session.startSyntheticStreaming() }
+                        .onFailure { MirrorLog.e(TAG, "synthetic_start_failed", it); stopSelfSafely() }
+                        .onSuccess { watchSession() }
+                }
             }
             ACTION_STOP -> { session.stopStreaming("notification"); stopSelfSafely() }
             else -> stopSelfSafely()
