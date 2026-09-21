@@ -29,6 +29,23 @@ class OverlayView(context: Context) : FrameLayout(context) {
     var debugEnabled: Boolean = false
         set(value) { field = value; if (!value) debug.visibility = GONE }
 
+    /**
+     * Status, info and hint text. Hidden during steady streaming so the mirrored image is not
+     * competing with a heads-up display; warnings, the pairing code and the active-mirroring
+     * indicator are never hidden.
+     */
+    var chromeVisible: Boolean = true
+        set(value) {
+            field = value
+            post {
+                val v = if (value) VISIBLE else GONE
+                status.visibility = v
+                info.visibility = v
+                if (hint.text.isNullOrBlank()) hint.visibility = GONE else hint.visibility = v
+                if (!value) debug.visibility = GONE else if (debugEnabled && !debug.text.isNullOrBlank()) debug.visibility = VISIBLE
+            }
+        }
+
     init {
         // Always-visible "mirroring active" indicator (spec security requirement).
         addView(indicator, LayoutParams(10, 10, Gravity.TOP or Gravity.END).apply { setMargins(0, 8, 8, 0) })
@@ -85,8 +102,8 @@ class OverlayView(context: Context) : FrameLayout(context) {
         }
     }
 
-    fun setStatus(s: String) = post { status.text = s }
-    fun setInfo(s: String) = post { info.text = s }
+    fun setStatus(s: String) = post { status.text = s; if (chromeVisible) status.visibility = VISIBLE }
+    fun setInfo(s: String) = post { info.text = s; if (chromeVisible) info.visibility = VISIBLE }
     fun setStreamingIndicator(on: Boolean) = post { indicator.visibility = if (on) VISIBLE else GONE }
     fun showPairingCode(formatted: String?) = post {
         code.text = formatted ?: ""
@@ -95,6 +112,6 @@ class OverlayView(context: Context) : FrameLayout(context) {
         hint.visibility = code.visibility
     }
     fun setWarning(w: String?) = post { warning.text = w ?: ""; warning.visibility = if (w != null) VISIBLE else GONE }
-    fun setDebug(d: String?) = post { if (debugEnabled) { debug.text = d ?: ""; debug.visibility = if (d != null) VISIBLE else GONE } }
-    fun setHint(h: String?) = post { if (code.visibility != VISIBLE) { hint.text = h ?: ""; hint.visibility = if (h != null) VISIBLE else GONE } }
+    fun setDebug(d: String?) = post { if (debugEnabled) { debug.text = d ?: ""; debug.visibility = if (d != null && chromeVisible) VISIBLE else GONE } }
+    fun setHint(h: String?) = post { if (code.visibility != VISIBLE) { hint.text = h ?: ""; hint.visibility = if (h != null && chromeVisible) VISIBLE else GONE } }
 }

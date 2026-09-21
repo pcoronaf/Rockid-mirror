@@ -65,6 +65,8 @@ interface SessionTransport {
 }
 
 interface SessionOverlay {
+    /** Status, info and hint text; warnings and the pairing code are never hidden. */
+    var chromeVisible: Boolean
     fun setStatus(text: String)
     fun setInfo(text: String)
     fun setPointer(x: Float?, y: Float?, pressed: Boolean)
@@ -93,7 +95,13 @@ class ReceiverSession(
     private val onExitRequested: () -> Unit = {},
     private val clockNs: () -> Long = System::nanoTime,
 ) {
-    private companion object { const val TAG = "Session"; const val KEYFRAME_REQUEST_MIN_INTERVAL_NS = 300_000_000L }
+    private companion object {
+        const val TAG = "Session"
+        const val KEYFRAME_REQUEST_MIN_INTERVAL_NS = 300_000_000L
+        const val STALL_WARNING_SECONDS = 3
+        /** How long the heads-up text stays on screen after something changes. */
+        const val CHROME_VISIBLE_MS = 4000L
+    }
 
     enum class State { ADVERTISING, PAIRING, CONNECTED, STREAMING, RECONNECT_WAIT }
 
@@ -106,6 +114,10 @@ class ReceiverSession(
     private var headJob: Job? = null
     private var baseViewport = ViewportState()
     private var pointerVisible = false
+    private var lastReassembly: ReassemblyStats? = null
+    private var lastFramesDecoded = -1L
+    private var stalledSeconds = 0
+    private var chromeJob: Job? = null
     private var framesSubmitted = 0L
     private var framesDroppedByDecoder = 0L
     val head = HeadViewportController(enabled = false)
@@ -122,7 +134,7 @@ class ReceiverSession(
                     val s = stats.snapshot(clockNs(), transport.clockOffsetNs)
                     transport.sendStats(s)
                     updateDebug(s)
-                    if (state == State.STREAMING && s.fps < 1f && framesSubmitted > 0) overlay.setWarning("No video: waiting for frames…") else overlay.setWarning(null)
+                    if (state == State.STREAMING) watchForStall(s) else { stalledSeconds = 0; overlay.setWarning(null) }
                 }
             }
         }
@@ -132,7 +144,7 @@ class ReceiverSession(
         }
     }
 
-    fun stop() { statsJob?.cancel(); headJob?.cancel(); decoder.stop() }
+    fun stop() { statsJob?.cancel(); headJob?.cancel(); chromeJob?.cancel(); decoder.stop() }
 
     // ---- transport callbacks ------------------------------------------------------------------
 
@@ -244,8 +256,46 @@ class ReceiverSession(
     }
 
     fun onReassemblyStats(s: ReassemblyStats) {
+        lastReassembly = s
         stats.onPacketCounters(s.packetsReceived, s.packetsLost, s.framesDelivered, s.framesDropped)
         if (stats.consumeKeyframeSuggestion(s.keyframeRequestsSuggested)) requestKeyframe("packet loss")
+    }
+
+    /**
+     * A black screen is useless on a device with no visible log, so when the stream is running
+     * but nothing reaches the display, say which stage stopped rather than showing nothing.
+     */
+    private fun watchForStall(s: Payloads.Stats) {
+        if (s.framesDecoded != lastFramesDecoded) {
+            lastFramesDecoded = s.framesDecoded
+            stalledSeconds = 0
+            overlay.setWarning(null)
+            return
+        }
+        stalledSeconds++
+        if (stalledSeconds < STALL_WARNING_SECONDS) return
+        val packets = lastReassembly?.packetsReceived ?: 0
+        val delivered = lastReassembly?.framesDelivered ?: 0
+        val reason = when {
+            streamFormat == null -> "no STREAM_FORMAT from the phone yet"
+            !decoder.surfaceReady -> "display surface not ready"
+            !decoder.isConfigured -> "decoder not configured (codec ${streamFormat?.codec})"
+            packets == 0L -> "no video packets arriving (UDP blocked on this network?)"
+            delivered == 0L -> "packets arrive but no frame completes ($packets received)"
+            framesSubmitted == 0L -> "frames complete but none reach the decoder"
+            else -> "decoder accepted ${framesSubmitted} frames and returned none"
+        }
+        overlay.chromeVisible = true
+        overlay.setWarning("No video: $reason")
+        ReceiverLog.w(TAG, "stall", "reason" to reason, "packets" to packets, "delivered" to delivered,
+            "submitted" to framesSubmitted, "decoded" to s.framesDecoded, "configured" to decoder.isConfigured, "surface" to decoder.surfaceReady)
+        if (stalledSeconds % 3 == 0) requestKeyframe("stalled: $reason")
+        // Every few seconds of silence, rebuild the decoder rather than sit on a dead one.
+        if (stalledSeconds % 6 == 0) {
+            ReceiverLog.w(TAG, "stall_reconfigure", "after" to stalledSeconds)
+            decoder.stop()
+            streamFormat?.let { onStreamFormat(it) }
+        }
     }
 
     /** Called after a successful (re)configuration, including a deferred one. */
@@ -270,10 +320,12 @@ class ReceiverSession(
     private fun onInput(input: GlassesInput) {
         ReceiverLog.d(TAG, "input", "type" to input::class.simpleName)
         when (input) {
-            GlassesInput.Select -> toggleFitZoom()
+            // The phone drives zoom and viewport; on the glasses a tap is for getting the
+            // heads-up text out of the way, which is what it is mostly in the way of.
+            GlassesInput.Select -> if (overlay.chromeVisible) hideChrome() else showChrome(sticky = true)
             GlassesInput.DoubleTap -> { overlay.setHint("Closing…"); onExitRequested() }
-            GlassesInput.Forward -> stepZoom(1.25f)
-            GlassesInput.Backward -> stepZoom(0.8f)
+            GlassesInput.Forward -> { showChrome(); stepZoom(1.25f) }
+            GlassesInput.Backward -> { showChrome(); stepZoom(0.8f) }
             GlassesInput.LongPress -> { head.recenter(); surface.setViewport(baseViewport); overlay.setHint("Recentered"); scope.launch { delay(1200); overlay.setHint(null) } }
             GlassesInput.Back -> { if (state == State.ADVERTISING || state == State.RECONNECT_WAIT) { onForgetAllSenders(); overlay.setHint("All paired phones forgotten"); scope.launch { delay(2000); overlay.setHint(null) } } }
             is GlassesInput.Unknown -> overlay.setHint("Key ${input.keyCode}")
@@ -302,6 +354,22 @@ class ReceiverSession(
         transport.requestKeyframe(reason)
     }
 
+    /** Shows the heads-up text, and unless [sticky] hides it again after a few seconds. */
+    private fun showChrome(sticky: Boolean = false) {
+        chromeJob?.cancel()
+        overlay.chromeVisible = true
+        if (sticky) return
+        chromeJob = scope.launch {
+            delay(CHROME_VISIBLE_MS)
+            if (state == State.STREAMING) overlay.chromeVisible = false
+        }
+    }
+
+    private fun hideChrome() {
+        chromeJob?.cancel()
+        overlay.chromeVisible = false
+    }
+
     private fun enter(next: State) {
         state = next
         val status = when (next) {
@@ -313,6 +381,8 @@ class ReceiverSession(
         }
         overlay.setStatus(status)
         overlay.setStreamingIndicator(next == State.STREAMING)
+        // Text is useful while connecting and in the way once the picture is up.
+        if (next == State.STREAMING) showChrome() else { chromeJob?.cancel(); overlay.chromeVisible = true }
         if (next != State.STREAMING) overlay.setDebug(null)
         if (next == State.ADVERTISING) overlay.setHint("Open Rokid Mirror on the phone · double tap the temple to exit")
         if (next == State.CONNECTED || next == State.STREAMING) overlay.setHint(null)

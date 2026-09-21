@@ -72,18 +72,7 @@ class ReceiverActivity : Activity() {
         // missing system service shows an error instead of a black rectangle.
         platform = AndroidPlatformAdapter(this)
         val display = runCatching { platform.getDisplayInfo() }.getOrElse { DisplayInfo(480, 640, 240, 60f) }
-        val root = FrameLayout(this).apply {
-            // Debug builds outline the window: if the outline is visible the display pipeline
-            // works and any remaining blankness is our logic, not compositing.
-            background = if (BuildConfig.DEBUG) {
-                android.graphics.drawable.GradientDrawable().apply {
-                    setColor(android.graphics.Color.BLACK)
-                    setStroke(2, android.graphics.Color.WHITE)
-                }
-            } else {
-                android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK)
-            }
-        }
+        val root = FrameLayout(this).apply { setBackgroundColor(android.graphics.Color.BLACK) }
         val host = FrameLayout(this).apply { clipChildren = true }
         renderer = ViewportRenderer(host, platform.createRenderTarget(), display)
         overlay = OverlayView(this).apply { debugEnabled = BuildConfig.DEBUG }
@@ -241,6 +230,9 @@ class ReceiverActivity : Activity() {
     }
 
     private val overlayBridge = object : SessionOverlay {
+        override var chromeVisible: Boolean
+            get() = overlay.chromeVisible
+            set(value) { overlay.chromeVisible = value }
         override fun setStatus(text: String) { overlay.setStatus(text) }
         override fun setInfo(text: String) { overlay.setInfo(text) }
         override fun setPointer(x: Float?, y: Float?, pressed: Boolean) { overlay.setPointer(x, y, pressed) }

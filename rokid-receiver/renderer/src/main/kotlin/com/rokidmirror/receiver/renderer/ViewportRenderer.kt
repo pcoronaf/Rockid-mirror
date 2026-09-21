@@ -1,7 +1,6 @@
 package com.rokidmirror.receiver.renderer
 
 import android.view.SurfaceHolder
-import android.view.View
 import android.view.SurfaceView
 import android.widget.FrameLayout
 import com.rokidmirror.protocol.viewport.Placement
@@ -20,7 +19,11 @@ import kotlin.math.roundToInt
  * surfaces: a TextureView with a matrix (not needed so far; see docs/architecture.md).
  */
 class ViewportRenderer(private val host: FrameLayout, target: RenderTarget, display: DisplayInfo) {
-    private companion object { const val TAG = "Renderer" }
+    private companion object {
+        const val TAG = "Renderer"
+        /** Idle footprint of the video surface: present, but covering nothing. */
+        const val IDLE_SIZE = 1
+    }
 
     val surfaceView: SurfaceView = target.surfaceView
     var displayWidth = display.width; private set
@@ -33,10 +36,12 @@ class ViewportRenderer(private val host: FrameLayout, target: RenderTarget, disp
     var lastPlacement: Placement? = null; private set
 
     init {
-        // Hidden until a real stream arrives. An empty SurfaceView punches a hole through the
-        // whole window on some devices, which would hide the overlay and look like a dead app.
-        surfaceView.visibility = View.GONE
-        host.addView(surfaceView, FrameLayout.LayoutParams(display.width, display.height))
+        // Idle size is 1x1 in the corner rather than hidden. A full-size empty SurfaceView
+        // punches a hole through the whole window and looks like a dead app, but hiding it
+        // destroys the surface, and then the decoder has nothing to configure against and the
+        // stream has to wait for a surface callback that may never line up. One pixel keeps the
+        // surface alive at all times and covers nothing.
+        host.addView(surfaceView, FrameLayout.LayoutParams(IDLE_SIZE, IDLE_SIZE))
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) { onSurfaceReady?.invoke(holder) }
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
@@ -68,8 +73,16 @@ class ViewportRenderer(private val host: FrameLayout, target: RenderTarget, disp
     /** Called when the stream stops so the overlay is unobstructed again. */
     fun hideVideo() {
         sourceWidth = 0; sourceHeight = 0
-        host.post { surfaceView.visibility = View.GONE }
+        lastPlacement = null
+        host.post {
+            val lp = surfaceView.layoutParams as FrameLayout.LayoutParams
+            lp.width = IDLE_SIZE; lp.height = IDLE_SIZE; lp.leftMargin = 0; lp.topMargin = 0
+            surfaceView.layoutParams = lp
+        }
     }
+
+    /** True once the video surface covers more than the idle corner. */
+    val isShowingVideo: Boolean get() = sourceWidth > 0 && sourceHeight > 0
 
     private fun apply() {
         if (sourceWidth <= 0 || sourceHeight <= 0) return
@@ -82,7 +95,6 @@ class ViewportRenderer(private val host: FrameLayout, target: RenderTarget, disp
             lp.leftMargin = p.left.roundToInt()
             lp.topMargin = p.top.roundToInt()
             surfaceView.layoutParams = lp
-            if (surfaceView.visibility != View.VISIBLE) surfaceView.visibility = View.VISIBLE
         }
         ReceiverLog.d(TAG, "placement", "mode" to viewport.fitMode, "scale" to viewport.scale, "w" to p.width.toInt(), "h" to p.height.toInt(), "l" to p.left.toInt(), "t" to p.top.toInt())
     }

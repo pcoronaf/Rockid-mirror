@@ -88,7 +88,10 @@ From community and vendor documentation (details and sources in `docs/rokid-sdk-
    and a picker launches an app onto it. Mouse mode then targets that display, so you can work
    in the app on the glasses while the phone shows something else. Android can refuse to move a
    given app to a second display, and the app says so when that happens.
-8. On the glasses, **double tap the temple** to exit, as in other Rokid apps. A single tap toggles
+8. On the glasses, **double tap the temple** to exit, as in other Rokid apps. A single tap shows
+   or hides the heads-up text, which hides itself a few seconds after the picture starts. Swipes
+   step the zoom and a long press recenters. Warnings and the pairing code are never hidden, and
+   if the picture stalls the glasses name the stage that stopped instead of showing black. A single tap toggles
    Fit and readable zoom, swipes step the zoom, and a long press recenters.
 6. *Diagnostics* shows and exports the sanitized latency/quality report.
 
