@@ -76,13 +76,19 @@ From community and vendor documentation (details and sources in `docs/rokid-sdk-
    accept the system consent dialog. A persistent notification shows while mirroring.
 5. Use Fit / Fill / 100% / Zoom, the sliders or the control surface (drag = pan, pinch = zoom,
    double tap = Fit) to make small text readable on the 480×640 display. Save the view as a
-   profile. **Test pattern** streams a synthetic source without capture consent (development).
+   profile. **Test pattern** and **Matrix rain** stream a generated picture without capture
+   consent, which is the quickest way to check the link.
 6. Switch the pad to **Mouse** to drive a cursor over the mirrored screen: drag moves it, tap
    clicks, long press holds, two fingers scroll, and Back / Home / Recents are one button each.
    Clicks need the *Rokid Mirror pointer* accessibility service, which the app offers to open in
    Settings; without it the cursor still moves so you can point at things. Clicks require
    whole-screen mirroring. See `docs/security.md` for exactly what that service can and cannot do.
-7. On the glasses, **double tap the temple** to exit, as in other Rokid apps. A single tap toggles
+7. **Extended screen** makes the glasses a second display rather than a copy of the phone: it
+   renders at the glasses' own resolution (1:1, so text stays sharp), needs no capture consent,
+   and a picker launches an app onto it. Mouse mode then targets that display, so you can work
+   in the app on the glasses while the phone shows something else. Android can refuse to move a
+   given app to a second display, and the app says so when that happens.
+8. On the glasses, **double tap the temple** to exit, as in other Rokid apps. A single tap toggles
    Fit and readable zoom, swipes step the zoom, and a long press recenters.
 6. *Diagnostics* shows and exports the sanitized latency/quality report.
 

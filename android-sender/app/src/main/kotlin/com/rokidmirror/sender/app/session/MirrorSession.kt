@@ -23,6 +23,8 @@ import com.rokidmirror.sender.capture.CaptureEvent
 import com.rokidmirror.sender.capture.CaptureGeometry
 import com.rokidmirror.sender.capture.CaptureGeometryPlanner
 import com.rokidmirror.sender.capture.CaptureMode
+import com.rokidmirror.sender.capture.ExtendedDisplayController
+import com.rokidmirror.sender.capture.LaunchableApp
 import com.rokidmirror.sender.capture.MediaProjectionCaptureController
 import com.rokidmirror.sender.control.SenderEvent
 import com.rokidmirror.sender.control.SenderState
@@ -108,6 +110,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
     })
     private var adaptive: AdaptiveController? = null
     private var synthetic: SyntheticSource? = null
+    private val extended = ExtendedDisplayController(context)
 
     private var endpoint: ReceiverEndpoint? = null
     private var pendingCode: CompletableDeferred<String>? = null
@@ -131,6 +134,8 @@ class MirrorSession(private val context: Context, private val container: AppCont
     /** Kept after a stream ends so the diagnostics export still describes the last session. */
     private var lastStreamParams: StreamParams? = null
     private var isSynthetic = false
+    private var syntheticPattern = SyntheticPattern.TEST_PATTERN
+    private var isExtended = false
 
     init {
         scope.launch { transport.events.collect { onTransportEvent(it) } }
@@ -240,6 +245,9 @@ class MirrorSession(private val context: Context, private val container: AppCont
     suspend fun startProjectionStreaming(resultCode: Int, data: Intent, sourceLabel: String) {
         stateMutex.withLock {
             try {
+                // Mirroring replaces any extended display or generated source.
+                if (isExtended) { runCatching { extended.stop() }; isExtended = false }
+                PointerService.instance?.targetDisplayId = android.view.Display.DEFAULT_DISPLAY
                 isSynthetic = false
                 val source = displayGeometry()
                 capture.setSourceGeometry(source)
@@ -255,15 +263,60 @@ class MirrorSession(private val context: Context, private val container: AppCont
         }
     }
 
-    /** Development path: streams the synthetic test pattern (no MediaProjection consent needed). */
-    suspend fun startSyntheticStreaming() {
+    /**
+     * Extended-screen mode: the glasses become a second display with their own apps instead of
+     * a copy of the phone. Needs no capture consent, because the display only ever shows content
+     * this app launches onto it.
+     */
+    suspend fun startExtendedStreaming() {
+        stateMutex.withLock {
+            try {
+                isSynthetic = false
+                isExtended = true
+                val caps = (transport.state.value as? TransportState.Connected)?.capabilities
+                    ?: throw MirrorException(ErrorCode.RECEIVER_NOT_FOUND, "not connected to a receiver")
+                // Render at the glasses' own resolution: 1:1 pixels, sharp text, least bitrate.
+                val width = StreamNegotiator.align(caps.display.width.takeIf { it > 0 } ?: 480)
+                val height = StreamNegotiator.align(caps.display.height.takeIf { it > 0 } ?: 640)
+                val dpi = caps.display.densityDpi.takeIf { it > 0 } ?: 240
+                val source = CaptureGeometry(width, height, dpi)
+                val surface = startEncoder(source)
+                extended.start(width, height, dpi, surface)
+                PointerService.instance?.targetDisplayId = extended.displayId
+                beginStream("Extended screen", source)
+                event("Extended display ${width}x$height @${dpi}dpi (id ${extended.displayId})")
+            } catch (e: MirrorException) {
+                isExtended = false
+                runCatching { extended.stop() }
+                runCatching { encoder.stop() }
+                dispatch(SenderEvent.Failed(e.code, e.details))
+                throw e
+            }
+        }
+    }
+
+    /** Apps with a launcher entry, for the extended-screen picker. */
+    fun launchableApps(): List<LaunchableApp> = runCatching { extended.launchableApps() }.getOrDefault(emptyList())
+
+    val extendedDisplayId: Int get() = extended.displayId
+    val isExtendedActive: Boolean get() = extended.isActive
+
+    fun launchOnExtendedDisplay(app: LaunchableApp) {
+        val result = extended.launch(app.packageName)
+        result.onSuccess { event("Launched ${app.label} on the glasses") }
+            .onFailure { event("Could not launch ${app.label}: ${(it as? MirrorException)?.details ?: it.message}") }
+    }
+
+    /** Development path: streams a generated picture (no MediaProjection consent needed). */
+    suspend fun startSyntheticStreaming(pattern: SyntheticPattern = SyntheticPattern.TEST_PATTERN) {
         stateMutex.withLock {
             try {
                 isSynthetic = true
+                syntheticPattern = pattern
                 val source = CaptureGeometry(720, 1280, 320)
                 val surface = startEncoder(source)
-                synthetic = SyntheticSource(surface, encoderConfig!!.width, encoderConfig!!.height, encoderConfig!!.fps).also { it.start() }
-                beginStream("Test pattern", source)
+                synthetic = SyntheticSource(surface, encoderConfig!!.width, encoderConfig!!.height, encoderConfig!!.fps, pattern).also { it.start() }
+                beginStream(pattern.sourceName, source)
             } catch (e: MirrorException) {
                 runCatching { encoder.stop() }
                 dispatch(SenderEvent.Failed(e.code, e.details))
@@ -315,6 +368,11 @@ class MirrorSession(private val context: Context, private val container: AppCont
         stateMutex.withLock {
             if (encoderConfig == null && synthetic == null) return
             synthetic?.stop(); synthetic = null
+            if (isExtended) {
+                runCatching { extended.stop() }
+                PointerService.instance?.targetDisplayId = android.view.Display.DEFAULT_DISPLAY
+                isExtended = false
+            }
             runCatching { capture.stop() }
             runCatching { encoder.stop() }
             if (transport.state.value is TransportState.Connected) runCatching { transport.send(MessageType.STREAM_STOP, Payloads.StreamStop.serializer(), Payloads.StreamStop(reason)) }
@@ -370,12 +428,15 @@ class MirrorSession(private val context: Context, private val container: AppCont
     private suspend fun restartEncoder(newConfig: EncoderConfig) {
         val surface = encoder.reconfigure(newConfig)
         encoderConfig = newConfig
-        if (!isSynthetic) {
+        if (isExtended) {
+            extended.resize(newConfig.width, newConfig.height, sourceGeometry?.densityDpi ?: 240)
+            extended.setSurface(surface)
+        } else if (!isSynthetic) {
             capture.resize(newConfig.width, newConfig.height, sourceGeometry?.densityDpi ?: 320)
             capture.setSurface(surface)
         } else {
             synthetic?.stop()
-            synthetic = SyntheticSource(surface, newConfig.width, newConfig.height, newConfig.fps).also { it.start() }
+            synthetic = SyntheticSource(surface, newConfig.width, newConfig.height, newConfig.fps, syntheticPattern).also { it.start() }
         }
         streamParams = streamParams?.copy(width = newConfig.width, height = newConfig.height, fps = newConfig.fps, bitrate = newConfig.bitrate)
         _info.update { it.copy(stream = streamParams, currentBitrate = newConfig.bitrate) }
@@ -556,6 +617,8 @@ class MirrorSession(private val context: Context, private val container: AppCont
      */
     val pointerInjectionAvailable: Boolean
         get() {
+            if (isExtended) return extended.isActive && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R
+            if (isSynthetic) return false
             val src = sourceGeometry ?: return false
             val disp = captureDisplayGeometry ?: return false
             return src.width == disp.width && src.height == disp.height
@@ -595,7 +658,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
         val svc = PointerService.instance
         if (svc == null) { event("Pointer service is off; enable it in Accessibility settings"); return }
         if (!pointerInjectionAvailable && what != "back" && what != "home" && what != "recents") {
-            event("Cannot $what: mouse mode needs whole-screen mirroring")
+            event(if (isSynthetic) "Cannot $what: the test pattern is not a real screen" else "Cannot $what: mouse mode needs whole-screen mirroring or extended screen")
             return
         }
         val (px, py) = pointer.toSourcePixels()

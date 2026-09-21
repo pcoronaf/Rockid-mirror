@@ -7,6 +7,7 @@
     <string name="notification_title_connected">Connected to Rokid Glasses</string>
     <string name="notification_connected">Ready to mirror. Tap to open.</string>
     <string name="notification_reconnecting">Reconnecting to the glasses…</string>
+    <string name="notification_extended">Extended screen running on the glasses.</string>
     <string name="pointer_service_label">Rokid Mirror pointer</string>
     <string name="pointer_service_description">Lets the control pad in Rokid Mirror tap, scroll and long press on your phone while you look at the glasses. It only plays back your own gestures: it never reads the screen or its contents.</string>
 </resources>

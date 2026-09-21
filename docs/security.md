@@ -38,6 +38,15 @@ This is a deliberate departure from the v0.1 non-goal "remote touch injection in
 Android apps", made at the product owner's request, and it is opt-in twice over: the user enables
 the service, then switches the pad to Mouse.
 
+## Extended screen
+
+Extended-screen mode creates a virtual display with `VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY`, so
+it can only ever show what this app explicitly launches onto it. It captures nothing, which is
+why it correctly needs no MediaProjection consent and no capture notification. Apps are listed
+through a manifest `queries` declaration for launcher activities rather than QUERY_ALL_PACKAGES.
+Launching another app onto a second display is subject to platform policy that has tightened over
+releases; refusals are reported to the user rather than worked around.
+
 ## Threat model notes
 * Passive LAN sniffing: sees ports, packet sizes/timing and the cleartext 40-byte headers (frame
   ids, timestamps), not content.

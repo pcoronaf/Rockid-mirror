@@ -45,8 +45,20 @@ import androidx.compose.ui.unit.dp
 import com.rokidmirror.protocol.StreamPreset
 import com.rokidmirror.protocol.viewport.FitMode
 import com.rokidmirror.sender.app.session.MirrorSession
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.size
+import androidx.core.graphics.drawable.toBitmap
 import com.rokidmirror.sender.app.PointerService
+import com.rokidmirror.sender.app.session.SyntheticPattern
 import com.rokidmirror.sender.capture.CaptureMode
+import com.rokidmirror.sender.capture.LaunchableApp
 import com.rokidmirror.sender.control.ProfileRepository
 import com.rokidmirror.sender.control.SenderState
 import com.rokidmirror.sender.control.ViewProfile
@@ -57,7 +69,8 @@ fun HomeScreen(
     session: MirrorSession,
     profiles: ProfileRepository,
     onRequestCapture: (CaptureMode) -> Unit,
-    onStartSynthetic: () -> Unit,
+    onStartSynthetic: (SyntheticPattern) -> Unit,
+    onStartExtended: () -> Unit,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -91,8 +104,34 @@ fun HomeScreen(
             Button(onClick = { onRequestCapture(CaptureMode.USER_CHOICE) }, enabled = state is SenderState.Ready, modifier = Modifier.weight(1f)) { Text("Select app") }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onStartSynthetic, enabled = state is SenderState.Ready, modifier = Modifier.weight(1f)) { Text("Test pattern") }
+            OutlinedButton(onClick = onStartExtended, enabled = state is SenderState.Ready, modifier = Modifier.weight(1f)) { Text("Extended screen") }
             if (connected) OutlinedButton(onClick = session::disconnect, modifier = Modifier.weight(1f)) { Text("Disconnect") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { onStartSynthetic(SyntheticPattern.TEST_PATTERN) }, enabled = state is SenderState.Ready, modifier = Modifier.weight(1f)) { Text("Test pattern") }
+            OutlinedButton(onClick = { onStartSynthetic(SyntheticPattern.MATRIX_RAIN) }, enabled = state is SenderState.Ready, modifier = Modifier.weight(1f)) { Text("Matrix rain") }
+        }
+
+        if (session.isExtendedActive) {
+            var showApps by remember { mutableStateOf(false) }
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Extended screen (display ${session.extendedDisplayId})", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "The glasses are a second screen, not a copy of the phone. Pick an app to open there, " +
+                            "then use the Mouse pad to work in it. Android may refuse to move some apps to a second display.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Button(onClick = { showApps = true }) { Text("Open an app on the glasses") }
+                }
+            }
+            if (showApps) {
+                AppPickerDialog(
+                    apps = remember { session.launchableApps() },
+                    onPick = { showApps = false; session.launchOnExtendedDisplay(it) },
+                    onDismiss = { showApps = false },
+                )
+            }
         }
 
         Text("Quality", style = MaterialTheme.typography.titleMedium)
@@ -187,6 +226,41 @@ fun HomeScreen(
 
         Button(onClick = onStop, enabled = streaming, modifier = Modifier.fillMaxWidth(), colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Stop") }
     }
+}
+
+/** Lists apps with a launcher entry so one can be started on the extended display. */
+@Composable
+private fun AppPickerDialog(apps: List<LaunchableApp>, onPick: (LaunchableApp) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Open on the glasses") },
+        text = {
+            if (apps.isEmpty()) {
+                Text("No launchable apps were visible to this app.")
+            } else {
+                LazyColumn(Modifier.height(360.dp)) {
+                    items(apps, key = { it.packageName }) { app ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable { onPick(app) }.padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            app.icon?.let { icon ->
+                                Image(
+                                    bitmap = remember(app.packageName) { icon.toBitmap(48, 48).asImageBitmap() },
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier.size(28.dp),
+                                )
+                            }
+                            Text(app.label, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
 }
 
 @Composable

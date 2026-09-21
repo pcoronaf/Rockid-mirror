@@ -44,6 +44,14 @@ class PointerService : AccessibilityService() {
         fun settingsIntent(): Intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
+    /**
+     * Which display gestures go to. Extended-screen mode points this at the virtual display so
+     * clicks land there rather than on the phone. Requires API 30; below that only the default
+     * display can be targeted.
+     */
+    @Volatile
+    var targetDisplayId: Int = android.view.Display.DEFAULT_DISPLAY
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
@@ -89,9 +97,12 @@ class PointerService : AccessibilityService() {
     private fun pathTo(x: Float, y: Float) = Path().apply { moveTo(x, y) }
 
     private fun stroke(path: Path, durationMs: Long, what: String): Boolean {
-        val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
-            .build()
+        val builder = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && targetDisplayId != android.view.Display.DEFAULT_DISPLAY) {
+            runCatching { builder.setDisplayId(targetDisplayId) }
+                .onFailure { MirrorLog.w(TAG, "set_display_failed", "display" to targetDisplayId, "error" to it.message) }
+        }
+        val gesture = builder.build()
         val ok = dispatchGesture(gesture, null, null)
         MirrorLog.d(TAG, "gesture", "what" to what, "dispatched" to ok)
         return ok

@@ -85,7 +85,13 @@ class MainActivity : ComponentActivity() {
                 }) { padding ->
                     val m = Modifier.padding(padding)
                     when (tab) {
-                        0 -> HomeScreen(session, container.profileRepository, requestCapture, onStartSynthetic = { MirrorService.startSynthetic(this@MainActivity) }, onStop = { MirrorService.stop(this@MainActivity); session.stopStreaming() }, modifier = m)
+                        0 -> HomeScreen(
+                            session, container.profileRepository, requestCapture,
+                            onStartSynthetic = { pattern -> MirrorService.startSynthetic(this@MainActivity, pattern) },
+                            onStartExtended = { MirrorService.startExtended(this@MainActivity) },
+                            onStop = { MirrorService.stop(this@MainActivity); session.stopStreaming() },
+                            modifier = m,
+                        )
                         1 -> ReceiversScreen(session, modifier = m)
                         2 -> DiagnosticsScreen(session, onShare = { shareText(it) }, modifier = m)
                         else -> LatencyMarkerScreen(modifier = m)
