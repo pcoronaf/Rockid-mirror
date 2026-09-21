@@ -71,7 +71,11 @@ class ReceiverTransport(
     private val controlPort: Int = Protocol.DEFAULT_CONTROL_PORT,
     private val clockNs: () -> Long = System::nanoTime,
 ) {
-    private companion object { const val TAG = "Transport" }
+    private companion object {
+        const val TAG = "Transport"
+        /** Concurrent unauthenticated handshakes tolerated before new ones are refused. */
+        const val MAX_HANDSHAKES = 3
+    }
 
     private var server: ServerSocket? = null
     private var udp: DatagramSocket? = null
@@ -79,6 +83,8 @@ class ReceiverTransport(
     private var udpThread: Thread? = null
     private val running = AtomicBoolean(false)
     private val connection = AtomicReference<Connection?>(null)
+    /** Sessions past accept() but not yet authenticated. */
+    private val handshaking = java.util.concurrent.atomic.AtomicInteger(0)
     val clockSync = ClockSync()
 
     val isConnected: Boolean get() = connection.get() != null
@@ -118,21 +124,21 @@ class ReceiverTransport(
         while (running.get()) {
             val socket = try { server?.accept() ?: break } catch (_: SocketException) { break } catch (e: Exception) { ReceiverLog.w(TAG, "accept_failed", "error" to e.message); continue }
             socket.tcpNoDelay = true
-            val existing = connection.get()
-            if (existing != null) {
-                // Busy: refuse politely. A paired phone reconnecting after a link loss usually
-                // arrives after our read loop noticed the old socket died; if not, the old one
-                // is replaced once its control timeout fires.
-                ReceiverLog.w(TAG, "rejected_second_sender", "from" to socket.inetAddress.hostAddress)
+            // A phone whose socket the platform aborted reconnects before this end has noticed
+            // the old one is dead, and refusing it stranded the user with "out of resources".
+            // New sessions are accepted and only take over once they have authenticated, so an
+            // unauthenticated stranger still cannot displace a working session.
+            if (handshaking.get() >= MAX_HANDSHAKES) {
+                ReceiverLog.w(TAG, "rejected_sender_busy", "from" to socket.inetAddress.hostAddress)
                 runCatching {
                     val f = MessageFactory("none", clockNs)
-                    Framing.write(socket.getOutputStream(), ControlCodec.encode(f.create(MessageType.ERROR, Payloads.Error.serializer(), Payloads.Error(ErrorCode.RESOURCE_EXHAUSTED.name, "receiver busy with another sender", true))))
+                    Framing.write(socket.getOutputStream(), ControlCodec.encode(f.create(MessageType.ERROR, Payloads.Error.serializer(), Payloads.Error(ErrorCode.RESOURCE_EXHAUSTED.name, "too many connection attempts at once", true))))
                 }
                 runCatching { socket.close() }
                 continue
             }
             val conn = Connection(socket)
-            connection.set(conn)
+            handshaking.incrementAndGet()
             Thread({ conn.run() }, "control-session").apply { isDaemon = true; start() }
         }
     }
@@ -167,6 +173,8 @@ class ReceiverTransport(
         fun run() {
             try {
                 handshake()
+                handshaking.decrementAndGet()
+                handshakeDone = true
                 readLoop()
             } catch (e: MirrorException) {
                 ReceiverLog.w(TAG, "session_ended", "code" to e.code, "details" to e.details)
@@ -175,8 +183,12 @@ class ReceiverTransport(
             } catch (e: Exception) {
                 if (!closed.get()) ReceiverLog.w(TAG, "session_error", "error" to e.message)
                 close(e.message ?: "error")
+            } finally {
+                if (!handshakeDone) handshaking.decrementAndGet()
             }
         }
+
+        private var handshakeDone = false
 
         private fun handshake() {
             socket.soTimeout = Protocol.PAIRING_CODE_TTL_MS.toInt() + 5000
@@ -206,6 +218,9 @@ class ReceiverTransport(
             videoCipher = VideoCipher(hs.keys.video)
             hs.issuedCredential?.let { credentials.store(hs.hello.senderId, it) }
             socket.soTimeout = Protocol.CONTROL_TIMEOUT_MS.toInt()
+            // Authenticated: take over from whatever session was here before.
+            val previous = connection.getAndSet(this)
+            if (previous != null && previous !== this) previous.close("replaced by a new session from $senderName")
             send(MessageType.CAPABILITIES, Payloads.Capabilities.serializer(), capabilities())
             listener.onConnected(senderName, factory.sessionId)
             ReceiverLog.i(TAG, "sender_authenticated", "sender" to senderName, "byCredential" to hs.authenticatedByCredential)
@@ -252,10 +267,15 @@ class ReceiverTransport(
             }
         }
 
+        /** Numbering, sealing and writing are one atomic step; see ControlChannelCipher. */
         fun <T> send(type: MessageType, serializer: KSerializer<T>, payload: T) {
             val c = cipher ?: return
             if (closed.get()) return
-            try { writeRaw(c.seal(ControlCodec.encode(factory.create(type, serializer, payload)))) } catch (e: Exception) { close("write failed: ${e.message}") }
+            try {
+                synchronized(writeLock) { Framing.write(output, c.seal(ControlCodec.encode(factory.create(type, serializer, payload)))) }
+            } catch (e: Exception) {
+                close("write failed: ${e.message}")
+            }
         }
 
         private fun writeRaw(bytes: ByteArray) = synchronized(writeLock) { Framing.write(output, bytes) }

@@ -15,12 +15,14 @@ import com.rokidmirror.protocol.viewport.ViewportMath
 import com.rokidmirror.protocol.viewport.ViewportState
 import com.rokidmirror.receiver.platform.GlassesInput
 import com.rokidmirror.receiver.platform.RokidPlatformAdapter
-import com.rokidmirror.receiver.platform.Support
 import com.rokidmirror.receiver.telemetry.PipelineStats
 import com.rokidmirror.receiver.telemetry.ReceiverLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.Base64
@@ -81,8 +83,10 @@ interface SessionOverlay {
  * Receiver state machine + glue: reacts to control messages, feeds the decoder, drives the
  * viewport (phone commands, touch bar, optional head motion) and reports STATS every second.
  */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class ReceiverSession(
-    private val platform: RokidPlatformAdapter,
+    /** The Activity's adapter while one is attached, null while the app has no window. */
+    private val platforms: StateFlow<RokidPlatformAdapter?>,
     private val surface: SessionSurface,
     private val decoder: SessionDecoder,
     private val transport: SessionTransport,
@@ -138,17 +142,19 @@ class ReceiverSession(
                 }
             }
         }
-        scope.launch { platform.inputEvents().collect { onInput(it) } }
+        scope.launch { platforms.flatMapLatest { it?.inputEvents() ?: emptyFlow() }.collect { onInput(it) } }
         // Surfacing raw codes on the glasses is the only practical way to learn what the temple
         // bar actually sends on this hardware.
         scope.launch {
-            platform.rawInput().collect { description ->
+            platforms.flatMapLatest { it?.rawInput() ?: emptyFlow() }.collect { description ->
                 ReceiverLog.i(TAG, "raw_input", "event" to description)
                 if (debugOverlay) { showChrome(); overlay.setHint(description) }
             }
         }
-        if (platform.getSensorCapabilities().rotationVector != Support.UNAVAILABLE) {
-            headJob = scope.launch { platform.headPose().collect { pose -> head.onPose(pose.yawRad, pose.pitchRad)?.let { surface.setViewport(it) } } }
+        // headPose() completes immediately when the device exposes no orientation sensor.
+        headJob = scope.launch {
+            platforms.flatMapLatest { it?.headPose() ?: emptyFlow() }
+                .collect { pose -> head.onPose(pose.yawRad, pose.pitchRad)?.let { surface.setViewport(it) } }
         }
     }
 
@@ -284,6 +290,7 @@ class ReceiverSession(
         if (stalledSeconds < STALL_WARNING_SECONDS) return
         val packets = lastReassembly?.packetsReceived ?: 0
         val delivered = lastReassembly?.framesDelivered ?: 0
+        if (!decoder.surfaceReady && !hasDisplay()) return
         val reason = when {
             streamFormat == null -> "no STREAM_FORMAT from the phone yet"
             !decoder.surfaceReady -> "display surface not ready"
@@ -304,6 +311,23 @@ class ReceiverSession(
             decoder.stop()
             streamFormat?.let { onStreamFormat(it) }
         }
+    }
+
+    /** A window appeared: restate everything it needs to draw, and rebuild the decoder. */
+    fun onDisplayAttached() {
+        overlay.chromeVisible = true
+        enter(state)
+        streamFormat?.let { onStreamFormat(it) }
+        surface.setViewport(baseViewport)
+        if (state == State.STREAMING) requestKeyframe("display reattached")
+    }
+
+    /** The window went away. The link stays up; there is simply nowhere to draw. */
+    fun onDisplayDetached() {
+        decoder.stop()
+        transport.requireKeyframe()
+        stalledSeconds = 0
+        ReceiverLog.i(TAG, "display_detached_stream_kept")
     }
 
     /** Called after a successful (re)configuration, including a deferred one. */
@@ -387,6 +411,8 @@ class ReceiverSession(
             if (state == State.STREAMING) overlay.chromeVisible = false
         }
     }
+
+    private fun hasDisplay(): Boolean = surface.displayWidth > 1 && surface.sourceWidth >= 0 && decoder.name != "-"
 
     private fun hideChrome() {
         chromeJob?.cancel()

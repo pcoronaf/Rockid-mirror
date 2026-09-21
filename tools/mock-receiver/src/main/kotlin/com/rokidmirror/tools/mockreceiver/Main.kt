@@ -173,6 +173,11 @@ private class Session(
         unitsInWindow = 0; bytesInWindow = 0; windowStart = now
     }
 
-    private fun <T> send(type: MessageType, ser: kotlinx.serialization.KSerializer<T>, payload: T) { val c = cipher ?: return; write(c.seal(ControlCodec.encode(hs.factory.create(type, ser, payload)))) }
+    @Synchronized
+    private fun <T> send(type: MessageType, ser: kotlinx.serialization.KSerializer<T>, payload: T) {
+        val c = cipher ?: return
+        write(c.seal(ControlCodec.encode(hs.factory.create(type, ser, payload))))
+    }
+
     @Synchronized private fun write(bytes: ByteArray) = Framing.write(output, bytes)
 }

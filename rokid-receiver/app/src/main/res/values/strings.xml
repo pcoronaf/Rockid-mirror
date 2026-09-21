@@ -1,3 +1,7 @@
 <resources>
     <string name="app_name">Rokid Mirror Receiver</string>
+    <string name="notification_channel">Receiver</string>
+    <string name="service_title">Rokid Mirror receiver</string>
+    <string name="service_text">Listening for your phone.</string>
+    <string name="service_stop">Stop</string>
 </resources>

@@ -64,6 +64,15 @@ Galaxy S25 (android-sender)                              Rokid Glasses (rokid-re
 5. `PipelineStats` records T3..T7 per frame and produces `STATS` every second; the reassembler's
    loss signals and decoder drops trigger rate-limited `KEYFRAME_REQUEST`s.
 
+## Receiver process model
+
+The link, the DNS-SD advertisement and the session live in `ReceiverService`, a foreground
+service, so the glasses' launcher, a sleep or another app taking the foreground no longer ends
+the session and forces re-pairing. `ReceiverActivity` contributes a `DisplayTarget` (renderer,
+overlay, decoder, input adapter) while it has a window, and the service's bridges absorb calls
+while it does not. A stream that arrives with no window asks the platform to bring the Activity
+forward; if that is refused, the link stays up and video resumes when the user opens the app.
+
 ## Threading
 
 * Sender: MediaCodec callbacks on a dedicated HandlerThread; UDP send on its own thread; control I/O

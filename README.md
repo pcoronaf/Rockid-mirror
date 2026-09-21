@@ -68,6 +68,8 @@ From community and vendor documentation (details and sources in `docs/rokid-sdk-
 ## Using it
 
 1. Glasses: launch **Rokid Mirror Receiver**. It shows *waiting for phone* and advertises itself.
+   A foreground service keeps the link alive when the window is not in front, so leaving the app
+   does not drop the pairing; double tapping the temple stops it properly.
 2. Phone: open **Rokid Mirror**. The receiver appears under *Receivers*; tap **Connect**.
 3. First time only: the glasses display a 6-digit code; type it on the phone. A credential is
    stored on both sides (Android Keystore) so later connections are automatic.

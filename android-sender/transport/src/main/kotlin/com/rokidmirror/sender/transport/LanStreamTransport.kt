@@ -281,17 +281,26 @@ class LanStreamTransport(
         }
     }
 
-    override suspend fun sendControl(message: ControlMessage) {
+    override suspend fun sendControl(message: ControlMessage) = writeMutex.withLock {
         val cipher = controlCipher ?: throw MirrorException(ErrorCode.NETWORK_LOST, "not connected")
-        writeFrame(cipher.seal(ControlCodec.encode(message)))
+        writeLocked(cipher.seal(ControlCodec.encode(message)))
     }
 
-    override suspend fun <T> send(type: MessageType, serializer: KSerializer<T>, payload: T) {
+    /**
+     * The message number, the cipher counter and the socket write all happen under one lock.
+     * Pings, viewport updates, pointer updates and session control come from different
+     * coroutines, and interleaving them produced counters the receiver saw out of order.
+     */
+    override suspend fun <T> send(type: MessageType, serializer: KSerializer<T>, payload: T) = writeMutex.withLock {
         val f = factory ?: throw MirrorException(ErrorCode.NETWORK_LOST, "not connected")
-        sendControl(f.create(type, serializer, payload))
+        val cipher = controlCipher ?: throw MirrorException(ErrorCode.NETWORK_LOST, "not connected")
+        writeLocked(cipher.seal(ControlCodec.encode(f.create(type, serializer, payload))))
     }
 
-    private suspend fun writeFrame(bytes: ByteArray) = writeMutex.withLock {
+    private suspend fun writeFrame(bytes: ByteArray) = writeMutex.withLock { writeLocked(bytes) }
+
+    /** Caller must hold [writeMutex]. */
+    private suspend fun writeLocked(bytes: ByteArray) {
         val out = output ?: throw MirrorException(ErrorCode.NETWORK_LOST, "not connected")
         try { runInterruptible { Framing.write(out, bytes) } } catch (e: java.io.IOException) { throw MirrorException(ErrorCode.NETWORK_LOST, e.message, e) }
     }

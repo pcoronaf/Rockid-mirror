@@ -6,6 +6,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 DURATION="${1:-8}"
+# Pick a free port pair so repeated or parallel runs never collide.
+PORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("",0));print(s.getsockname()[1]);s.close()')"
+VIDEO_PORT="$((PORT + 1))"
 OUT="$(mktemp -d)"
 trap 'kill $(jobs -p) 2>/dev/null || true; rm -rf "$OUT"' EXIT
 
@@ -27,10 +30,10 @@ PY
 
 GRADLE_OPTS="${GRADLE_OPTS:-}"
 ./gradlew -q --no-daemon :mock-receiver:installDist :stream-generator:installDist >/dev/null
-mock-receiver/build/install/mock-receiver/bin/mock-receiver --no-mdns --port 47110 --video-port 47111 --dump "$OUT/out.h264" > "$OUT/receiver.log" 2>&1 &
+mock-receiver/build/install/mock-receiver/bin/mock-receiver --no-mdns --port "$PORT" --video-port "$VIDEO_PORT" --dump "$OUT/out.h264" > "$OUT/receiver.log" 2>&1 &
 sleep 2
 mkfifo "$OUT/stdin"
-stream-generator/build/install/stream-generator/bin/stream-generator --host 127.0.0.1 --port 47110 --file "$OUT/test.h264" --fps 30 --loop < "$OUT/stdin" > "$OUT/sender.log" 2>&1 &
+stream-generator/build/install/stream-generator/bin/stream-generator --host 127.0.0.1 --port "$PORT" --file "$OUT/test.h264" --fps 30 --loop < "$OUT/stdin" > "$OUT/sender.log" 2>&1 &
 exec 3>"$OUT/stdin"
 for _ in $(seq 1 50); do
   CODE=$(grep -o 'PAIRING CODE: [0-9 ]*' "$OUT/receiver.log" | head -1 | sed 's/PAIRING CODE: //; s/ //g' || true)

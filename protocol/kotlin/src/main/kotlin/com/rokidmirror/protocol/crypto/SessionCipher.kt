@@ -38,6 +38,10 @@ class AeadKey(key: ByteArray) {
 /**
  * Encrypts one direction of the ordered control channel. Nonce = direction byte, 3 zero bytes,
  * 64-bit counter. The receiver requires strictly increasing counters (TCP preserves order).
+ *
+ * Callers must hold the channel's write lock across [seal] AND the socket write. Sealing outside
+ * the lock lets two senders take counters in one order and write them in another, which the peer
+ * correctly rejects as tampering and drops the link.
  */
 class ControlChannelCipher(sendKey: ByteArray, receiveKey: ByteArray, private val sendDirection: Byte, private val receiveDirection: Byte) {
     private val sender = AeadKey(sendKey)
@@ -45,6 +49,7 @@ class ControlChannelCipher(sendKey: ByteArray, receiveKey: ByteArray, private va
     private var sendCounter = 0L
     private var expectedReceiveCounter = 0L
 
+    @Synchronized
     fun seal(plaintext: ByteArray): ByteArray {
         val counter = sendCounter++
         val out = ByteBuffer.allocate(8 + plaintext.size + AeadKey.TAG_BYTES)
@@ -53,6 +58,7 @@ class ControlChannelCipher(sendKey: ByteArray, receiveKey: ByteArray, private va
         return out.array()
     }
 
+    @Synchronized
     fun open(frame: ByteArray): ByteArray {
         if (frame.size < 8 + AeadKey.TAG_BYTES) throw MirrorException(ErrorCode.AUTHENTICATION_FAILED, "short encrypted frame")
         val buf = ByteBuffer.wrap(frame)
