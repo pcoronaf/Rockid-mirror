@@ -73,6 +73,23 @@ overlay, decoder, input adapter) while it has a window, and the service's bridge
 while it does not. A stream that arrives with no window asks the platform to bring the Activity
 forward; if that is refused, the link stays up and video resumes when the user opens the app.
 
+## Rate control
+
+The adaptive controller only cuts quality when cutting can plausibly help. It distinguishes
+three things that look alike in a single reading:
+
+* **Our own pipeline overflowing** (send-queue drops, encoder backpressure). A cut always
+  relieves this, so it acts immediately.
+* **Congestion we are causing** (loss, or round-trip time above the link's own measured floor).
+  It cuts, then checks whether the signal actually fell. If two cuts change nothing, the
+  pressure is not ours to fix: it stops cutting and climbs back.
+* **A link that is simply lossy or far away.** Absolute round-trip time and loss below two
+  percent are not treated as congestion at all.
+
+Recovery climbs to the level the link last tolerated rather than straight to the preset maximum,
+and raises that ceiling only after sustained calm. Without it the stream saw-toothed: saturate,
+stall, collapse, repeat.
+
 ## Threading
 
 * Sender: MediaCodec callbacks on a dedicated HandlerThread; UDP send on its own thread; control I/O

@@ -9,6 +9,8 @@ class AdaptiveControllerTest {
     private val calm = AdaptiveInputs(lossFraction = 0f, rttMs = 20f, minRttMs = 18f, encodedFps = 30f, encodeLatencyMs = 8f, receiverDecodeLagFrames = 0, droppedFramesPerSecond = 0f, sendQueueDrops = 0)
     private val mild = calm.copy(lossFraction = 0.03f)
     private val queuing = calm.copy(rttMs = 300f, minRttMs = 150f)
+    /** Our own pipeline overflowing: a cut always relieves it, so it is never held back. */
+    private val backpressure = calm.copy(sendQueueDrops = 2)
     private val severe = calm.copy(lossFraction = 0.2f)
 
     @Test
@@ -25,7 +27,7 @@ class AdaptiveControllerTest {
         val c = ctl()
         var seenFps = false; var seenRes = false
         repeat(40) {
-            when (val a = c.evaluate(queuing)) {
+            when (val a = c.evaluate(backpressure)) {
                 is AdaptiveAction.SetBitrate -> assertTrue("bitrate must drop before fps/res", !seenFps && !seenRes)
                 is AdaptiveAction.SetFps -> { assertEquals(30, a.fps); assertEquals(1_000_000, c.level.bitrate); seenFps = true }
                 is AdaptiveAction.SetResolutionStep -> { assertTrue(seenFps); seenRes = true }
@@ -61,6 +63,28 @@ class AdaptiveControllerTest {
         assertEquals(3_000_000, c.level.bitrate.coerceAtMost(3_000_000))
         assertEquals(60, c.level.fps)
         assertEquals(0, c.level.resolutionStep)
+    }
+
+    @Test
+    fun queuingThatIgnoresTheCutsAlsoStopsTheRatchet() {
+        // 225 ms round trip on a 10 ms link that stays 225 ms however little we send. Cutting
+        // to a postage stamp did not help and the stream never came back.
+        val c = ctl()
+        repeat(40) { c.evaluate(calm.copy(rttMs = 225f, minRttMs = 10f)) }
+        assertEquals(60, c.level.fps)
+        assertEquals(0, c.level.resolutionStep)
+    }
+
+    @Test
+    fun recoveryStopsBelowTheLevelThatUpsetTheLink() {
+        // Climb, hit trouble at ~3 Mbps, then recover: it must not charge straight back to max.
+        val c = ctl()
+        repeat(2) { c.evaluate(queuing) }
+        val afterCut = c.level.bitrate
+        assertTrue(afterCut < 3_000_000)
+        repeat(60) { c.evaluate(calm) }
+        assertTrue("ceiling should hold recovery below the old peak, got ${c.level.bitrate}", c.level.bitrate < 4_000_000)
+        assertTrue(c.level.bitrate > afterCut)
     }
 
     @Test

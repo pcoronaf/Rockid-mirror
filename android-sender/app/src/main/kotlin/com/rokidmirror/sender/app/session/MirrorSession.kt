@@ -80,6 +80,8 @@ class MirrorSession(private val context: Context, private val container: AppCont
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val stateMutex = Mutex()
+    /** One connection attempt at a time, whoever asked for it. */
+    private val connectMutex = Mutex()
 
     private val _state = MutableStateFlow<SenderState>(SenderState.Idle)
     val state: StateFlow<SenderState> = _state.asStateFlow()
@@ -184,6 +186,8 @@ class MirrorSession(private val context: Context, private val container: AppCont
 
     fun connect(receiver: DiscoveredReceiver) {
         val ep = ReceiverEndpoint(receiver.id, receiver.name, receiver.host, receiver.port)
+        // An automatic retry must not race a deliberate connect.
+        reconnectJob?.cancel()
         endpoint = ep
         userDisconnect = false
         _info.update { it.copy(receiverName = ep.name, receiverId = ep.id) }
@@ -202,7 +206,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
     fun connectManual(host: String, port: Int = Protocol.DEFAULT_CONTROL_PORT) =
         connect(DiscoveredReceiver(id = "manual:$host", name = host, host = host, port = port, manual = true))
 
-    private suspend fun connectOnce(ep: ReceiverEndpoint) {
+    private suspend fun connectOnce(ep: ReceiverEndpoint) = connectMutex.withLock {
         val credential = container.credentialStore.load(ep.id)
         transport.connect(ep, credential) {
             val deferred = CompletableDeferred<String>().also { pendingCode = it }

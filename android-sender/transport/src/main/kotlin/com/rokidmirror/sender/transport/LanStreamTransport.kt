@@ -91,6 +91,8 @@ class LanStreamTransport(
     private var fragmenter: Fragmenter? = null
     private var factory: MessageFactory? = null
     private val writeMutex = Mutex()
+    /** Serializes connection attempts; two at once left two readers on one socket. */
+    private val connectMutex = Mutex()
     private val clockSync = ClockSync()
     private var readerJob: Job? = null
     private var pingJob: Job? = null
@@ -107,6 +109,19 @@ class LanStreamTransport(
 
     override suspend fun connect(receiver: ReceiverEndpoint, credential: PairingCredential?, pairingCodeProvider: suspend () -> String) {
         withContext(Dispatchers.IO) {
+            connectMutex.withLock { connectLocked(receiver, credential, pairingCodeProvider) }
+        }
+    }
+
+    /**
+     * Overlapping attempts used to replace the socket and cipher under a read loop that was
+     * still running, so two readers consumed one stream and each saw the other's frames as
+     * counters out of order. Any previous session is torn down completely first.
+     */
+    private suspend fun connectLocked(receiver: ReceiverEndpoint, credential: PairingCredential?, pairingCodeProvider: suspend () -> String) {
+        run {
+            closed.set(true)
+            teardown()
             endpoint = receiver
             closed.set(false)
             _state.value = TransportState.Connecting(receiver)
@@ -307,13 +322,23 @@ class LanStreamTransport(
 
     override suspend fun close(reason: String) {
         if (closed.getAndSet(true)) return
-        runCatching { withTimeout(500) { factory?.let { f -> writeFrameQuiet(controlCipher?.seal(ControlCodec.encode(f.create(MessageType.GOODBYE, Payloads.Goodbye.serializer(), Payloads.Goodbye(reason))))) } } }
+        // Sealed and written under the same lock as everything else, or the goodbye can
+        // overtake a message that took a lower counter.
+        runCatching {
+            withTimeout(500) {
+                writeMutex.withLock {
+                    val f = factory
+                    val cipher = controlCipher
+                    if (f != null && cipher != null) {
+                        runCatching { writeLocked(cipher.seal(ControlCodec.encode(f.create(MessageType.GOODBYE, Payloads.Goodbye.serializer(), Payloads.Goodbye(reason))))) }
+                    }
+                }
+            }
+        }
         teardown()
         _state.value = TransportState.Disconnected
         MirrorLog.i(TAG, "closed", "reason" to reason)
     }
-
-    private suspend fun writeFrameQuiet(bytes: ByteArray?) { if (bytes != null) runCatching { writeFrame(bytes) } }
 
     private suspend fun failAndClose(code: ErrorCode, details: String?, emitEvent: Boolean = true) {
         val wasClosed = closed.getAndSet(true)
