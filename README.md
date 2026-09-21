@@ -8,20 +8,19 @@ Two apps plus a shared protocol library:
 
 | Part | What it is | Status |
 |---|---|---|
-| `android-sender/` | Kotlin/Compose phone app: MediaProjection → VirtualDisplay → H.264 MediaCodec Surface encoder → encrypted LAN transport; DNS-SD discovery; pairing; zoom/pan/profiles; adaptive bitrate; diagnostics | builds, unit-tested, **not yet run on a device** |
-| `rokid-receiver/` | Android 12 (API 32) app for the glasses: control server + pairing, AEAD UDP video, hardware MediaCodec decode straight to a SurfaceView, zero-copy fit/fill/zoom/pan viewport, overlay, optional head-motion viewport | builds, unit-tested, **not yet run on RV101/RV102** |
+| `android-sender/` | Kotlin/Compose phone app: MediaProjection → VirtualDisplay → H.264 MediaCodec Surface encoder → encrypted LAN transport; DNS-SD discovery; pairing; zoom/pan/profiles; mouse mode; extended screen; adaptive bitrate; diagnostics | running on a Galaxy S25 |
+| `rokid-receiver/` | Android 12 (API 32) app for the glasses: foreground service holding the link, control server + pairing, AEAD UDP video, MediaCodec decode straight to a SurfaceView, zero-copy fit/fill/zoom/pan viewport, overlay, optional head-motion viewport | running on Rokid Glasses |
 | `protocol/` | Shared wire protocol: versioned JSON control messages, 40-byte video packet header, fragmentation/reassembly, ECDH + HKDF + AES-GCM session crypto, bitwise commit/reveal pairing | 39 JVM tests |
 | `tools/` | `mock-receiver` (desktop stand-in for the glasses), `stream-generator` (replays an H.264 file over the protocol), `packet-inspector`, `latency-marker` procedure, `e2e-loopback.sh` | builds; loopback e2e passes |
 | `docs/` | architecture, protocol, Rokid SDK findings, latency testing, security, dependencies, M0 feasibility report | see below |
 
-**Where this stands against the spec's milestones:** the code covers M1–M3 functionality and
-the M2 security model, but the specification's **M0 gate (prove the glasses can decode and
-display a stream) has not been executed** because no RV101/RV102 was available in this
-environment. Everything the receiver does uses standard Android 12 APIs, which public Rokid
-documentation says the glasses expose to third-party APKs; that assumption is recorded, with
-its sources and the open items, in [`docs/rokid-sdk-findings.md`](docs/rokid-sdk-findings.md)
-and [`docs/m0-feasibility-report.md`](docs/m0-feasibility-report.md). Run Task D
-(`tools/stream-generator` → glasses) first when hardware is available.
+**Where this stands against the spec's milestones:** the M0 gate is **closed: proceed with
+constraints**. On real hardware the glasses sustain 720p60 decode at 4250 kbps, and the software
+pipeline measures about 19 ms end to end (encode 5.1, network 5.4, reassembly 3.1, decode 5.6),
+with more than an hour of continuous use and no perceptible warming. Measurements, the platform
+limits that were established rather than assumed, and what remains unmeasured are in
+[`docs/m0-feasibility-report.md`](docs/m0-feasibility-report.md). The code covers M1–M3
+functionality and the M2 security model.
 
 ## Repository layout
 

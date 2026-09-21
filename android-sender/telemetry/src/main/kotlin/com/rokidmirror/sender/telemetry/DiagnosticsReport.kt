@@ -19,6 +19,9 @@ data class DiagnosticsReport(
     val receiverModel: String? = null,
     val receiverOs: String? = null,
     val receiverVersion: String? = null,
+    val receiverDecoder: String? = null,
+    val receiverDecoderHardware: Boolean = false,
+    val receiverMaxDecode: String? = null,
     val negotiatedCodec: String? = null,
     val encodedWidth: Int = 0,
     val encodedHeight: Int = 0,
@@ -47,6 +50,7 @@ data class DiagnosticsReport(
         appendLine("Rokid Mirror diagnostics")
         appendLine("sender $senderVersion  protocol v$protocolVersion  $phoneModel / Android $androidVersion")
         appendLine("receiver ${receiverName ?: "-"} (${receiverModel ?: "-"}, ${receiverOs ?: "-"}, app ${receiverVersion ?: "-"})")
+        appendLine("receiver decode ${receiverDecoder ?: "-"} hw=$receiverDecoderHardware max ${receiverMaxDecode ?: "-"}")
         appendLine("stream ${negotiatedCodec ?: "-"} ${encodedWidth}x$encodedHeight @ ${"%.1f".format(fps)}/$targetFps fps, ${bitrateBps / 1000} kbps, encoder ${encoderName ?: "-"} lowLatency=$encoderLowLatency")
         appendLine("rtt ${"%.1f".format(rttMs)} ms  loss ${"%.2f".format(lossFraction * 100)} %  network ~${"%.1f".format(networkMs)} ms")
         appendLine("encode avg ${"%.1f".format(encodeMsAvg)} ms max ${"%.1f".format(encodeMsMax)} ms  reassembly ${"%.1f".format(receiverReassemblyMs)} ms  decode ${"%.1f".format(receiverDecodeMs)} ms  render ${"%.1f".format(receiverRenderMs)} ms")

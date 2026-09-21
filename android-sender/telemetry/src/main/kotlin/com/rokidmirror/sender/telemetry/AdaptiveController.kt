@@ -41,7 +41,12 @@ class AdaptiveController(
     private val stressPeriodsBeforeDegrade: Int = 2,
 ) {
     companion object {
-        const val LOSS_MILD = 0.01f
+        /** Wi-Fi loses a packet now and then; below this the keyframe recovery path copes. */
+        const val LOSS_MILD = 0.02f
+        /** Degrades that fail to reduce loss before the controller concludes it cannot help. */
+        const val INEFFECTIVE_DEGRADES_BEFORE_HOLD = 2
+        /** Periods spent recovering instead of degrading once that conclusion is reached. */
+        const val HOLD_PERIODS = 30
         const val LOSS_SEVERE = 0.08f
         /** Queuing delay above the link's floor that counts as congestion. */
         const val RTT_EXCESS_STRESS_MS = 60f
@@ -55,6 +60,9 @@ class AdaptiveController(
     var level = AdaptiveLevel(maxBitrate, maxFps, 0); private set
     private var stableCount = 0
     private var stressCount = 0
+    private var lossBeforeDegrade = -1f
+    private var ineffectiveDegrades = 0
+    private var holdPeriods = 0
     private var lastKeyframeRequestPeriod = -10
     private var period = 0
 
@@ -62,6 +70,9 @@ class AdaptiveController(
         level = AdaptiveLevel(startBitrate.coerceIn(minBitrate, maxBitrate), fps, 0)
         stableCount = 0
         stressCount = 0
+        lossBeforeDegrade = -1f
+        ineffectiveDegrades = 0
+        holdPeriods = 0
     }
 
     /** Called once per period; returns at most one action so changes stay observable. */
@@ -71,6 +82,14 @@ class AdaptiveController(
         // stream for when frames do start. This happened on a source that produced no frames
         // at all, which the controller happily throttled to nothing.
         if (input.encodedFps in 0f..0.5f) { stressCount = 0; return AdaptiveAction.None }
+
+        // Was the last loss-driven degrade worth anything? Lowering the bitrate can only help
+        // when the loss comes from congestion we are causing. On a lossy radio it does nothing,
+        // and the controller used to keep cutting until the picture was unusable.
+        if (lossBeforeDegrade >= 0f) {
+            ineffectiveDegrades = if (input.lossFraction <= lossBeforeDegrade * 0.75f) 0 else ineffectiveDegrades + 1
+            lossBeforeDegrade = -1f
+        }
 
         // A link with a 150 ms floor is not congested, it is just far away. Only delay ABOVE
         // that floor means queues are building, which is what reducing bitrate can fix.
@@ -86,12 +105,27 @@ class AdaptiveController(
             stableCount = 0
             return AdaptiveAction.RequestKeyframe("loss=${"%.2f".format(input.lossFraction)}")
         }
+        if (holdPeriods > 0) {
+            // Established that quality cuts are not buying anything: climb back instead.
+            holdPeriods--
+            stableCount++
+            if (stableCount >= stableIntervalsBeforeUpgrade) { stableCount = 0; return upgrade() }
+            return AdaptiveAction.None
+        }
+
         if (stressed) {
             stableCount = 0
             stressCount++
             // Hysteresis: one bad sample is not a trend. Reacting to every blip walked the
             // stream down to an unusable bitrate and resolution and never recovered.
             if (stressCount < stressPeriodsBeforeDegrade && !severe) return AdaptiveAction.None
+            if (ineffectiveDegrades >= INEFFECTIVE_DEGRADES_BEFORE_HOLD && !severe) {
+                ineffectiveDegrades = 0
+                stressCount = 0
+                holdPeriods = HOLD_PERIODS
+                return upgrade()
+            }
+            if (input.lossFraction >= LOSS_MILD) lossBeforeDegrade = input.lossFraction
             return degrade(severe)
         }
         stressCount = 0

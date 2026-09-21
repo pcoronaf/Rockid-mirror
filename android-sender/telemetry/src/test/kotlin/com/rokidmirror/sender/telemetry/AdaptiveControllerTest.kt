@@ -7,7 +7,8 @@ import org.junit.Test
 class AdaptiveControllerTest {
     private fun ctl() = AdaptiveController(minBitrate = 1_000_000, maxBitrate = 4_000_000, maxFps = 60, stableIntervalsBeforeUpgrade = 3).apply { reset(3_000_000, 60) }
     private val calm = AdaptiveInputs(lossFraction = 0f, rttMs = 20f, minRttMs = 18f, encodedFps = 30f, encodeLatencyMs = 8f, receiverDecodeLagFrames = 0, droppedFramesPerSecond = 0f, sendQueueDrops = 0)
-    private val mild = calm.copy(lossFraction = 0.02f)
+    private val mild = calm.copy(lossFraction = 0.03f)
+    private val queuing = calm.copy(rttMs = 300f, minRttMs = 150f)
     private val severe = calm.copy(lossFraction = 0.2f)
 
     @Test
@@ -24,7 +25,7 @@ class AdaptiveControllerTest {
         val c = ctl()
         var seenFps = false; var seenRes = false
         repeat(40) {
-            when (val a = c.evaluate(mild)) {
+            when (val a = c.evaluate(queuing)) {
                 is AdaptiveAction.SetBitrate -> assertTrue("bitrate must drop before fps/res", !seenFps && !seenRes)
                 is AdaptiveAction.SetFps -> { assertEquals(30, a.fps); assertEquals(1_000_000, c.level.bitrate); seenFps = true }
                 is AdaptiveAction.SetResolutionStep -> { assertTrue(seenFps); seenRes = true }
@@ -77,6 +78,31 @@ class AdaptiveControllerTest {
         assertEquals(3_000_000, c.level.bitrate)
         assertEquals(60, c.level.fps)
         assertEquals(0, c.level.resolutionStep)
+    }
+
+    @Test
+    fun lossThatCutsDoesNotStopTheDescent() {
+        // Congestion: each cut halves the loss, so the controller should keep working.
+        val c = ctl()
+        var loss = 0.06f
+        var cuts = 0
+        repeat(12) {
+            val action = c.evaluate(calm.copy(lossFraction = loss))
+            if (action is AdaptiveAction.SetBitrate && action.bitrate < 3_000_000) { cuts++; loss *= 0.4f }
+        }
+        assertTrue("expected sustained cuts, saw $cuts", cuts >= 2)
+        assertTrue(c.level.bitrate < 3_000_000)
+    }
+
+    @Test
+    fun lossThatIgnoresTheCutsStopsTheRatchetAndRecovers() {
+        // A radio that loses 3 % no matter what we send. The old controller cut to the floor
+        // and stayed there; it must stop cutting and climb back instead.
+        val c = ctl()
+        repeat(40) { c.evaluate(mild) }
+        assertEquals("frame rate must not be sacrificed to loss we cannot fix", 60, c.level.fps)
+        assertEquals(0, c.level.resolutionStep)
+        assertTrue("bitrate should recover, was ${c.level.bitrate}", c.level.bitrate > 1_500_000)
     }
 
     @Test

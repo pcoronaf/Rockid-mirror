@@ -45,3 +45,39 @@ class PipelineStatsTest {
         assertTrue(s.consumeKeyframeSuggestion(3))
     }
 }
+
+/** A vendor codec reported render timestamps days apart from our clock; they must be ignored. */
+class RenderTimestampSanityTest {
+    @Test
+    fun implausibleRenderTimestampIsIgnoredAndReportedAsUnmeasured() {
+        val s = PipelineStats()
+        val t = 1_000_000_000L
+        s.onComplete(1, t, t, 100)
+        s.onSubmitted(1, t)
+        s.onDecoded(1, t + 5_000_000)
+        s.onPresented(1, t + 783_308_544_000_000L) // nine days later: a different clock
+        assertEquals(-1f, s.snapshot(t + 10_000_000).renderMs, 0.001f)
+    }
+
+    @Test
+    fun plausibleRenderTimestampIsKept() {
+        val s = PipelineStats()
+        val t = 1_000_000_000L
+        s.onComplete(1, t, t, 100)
+        s.onSubmitted(1, t)
+        s.onDecoded(1, t + 5_000_000)
+        s.onPresented(1, t + 8_000_000)
+        assertEquals(3f, s.snapshot(t + 10_000_000).renderMs, 0.01f)
+    }
+
+    @Test
+    fun negativeRenderDeltaIsIgnored() {
+        val s = PipelineStats()
+        val t = 1_000_000_000L
+        s.onComplete(1, t, t, 100)
+        s.onSubmitted(1, t)
+        s.onDecoded(1, t + 5_000_000)
+        s.onPresented(1, t)
+        assertEquals(-1f, s.snapshot(t + 10_000_000).renderMs, 0.001f)
+    }
+}

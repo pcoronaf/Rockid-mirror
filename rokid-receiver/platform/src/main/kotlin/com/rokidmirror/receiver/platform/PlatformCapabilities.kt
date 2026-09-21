@@ -45,6 +45,7 @@ object PlatformCapabilities {
             codecs = codecs,
             maxDecode = maxDecode,
             input = Payloads.InputCapability(touchBar = input.touchBar != Support.UNAVAILABLE, imu = sensors.rotationVector != Support.UNAVAILABLE, keys = input.hardwareKeys != Support.UNAVAILABLE),
+            decoderName = probe?.name ?: "",
             receiverModel = platform.model,
             receiverOs = "${platform.os} / API ${platform.apiLevel} / ${platform.abi}",
             headViewportSupported = sensors.rotationVector != Support.UNAVAILABLE,

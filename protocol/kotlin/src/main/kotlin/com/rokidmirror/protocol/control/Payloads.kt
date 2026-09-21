@@ -94,6 +94,8 @@ object Payloads {
         val input: InputCapability = InputCapability(),
         val receiverModel: String = "",
         val receiverOs: String = "",
+        /** Decoder component actually selected on the receiver, e.g. "c2.qti.avc.decoder". */
+        val decoderName: String = "",
         val headViewportSupported: Boolean = false,
     )
 

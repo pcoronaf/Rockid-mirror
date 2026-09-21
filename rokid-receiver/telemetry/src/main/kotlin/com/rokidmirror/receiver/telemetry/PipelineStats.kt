@@ -11,7 +11,10 @@ class FrameTiming(
     var decodedNs: Long = 0,   // T6
     var presentedNs: Long = 0, // T7
     var bytes: Int = 0,
-)
+) {
+    /** False until a render timestamp that is actually on our clock has been seen. */
+    var presentedMeasured: Boolean = false
+}
 
 /**
  * Sliding one-second window over completed frames plus lifetime counters. Populates the STATS
@@ -19,6 +22,11 @@ class FrameTiming(
  * callbacks).
  */
 class PipelineStats(private val windowNs: Long = 1_000_000_000L) {
+    private companion object {
+        /** Longer than this and the timestamp is not a render delay on our clock. */
+        const val MAX_PLAUSIBLE_RENDER_NS = 500_000_000L
+    }
+
     private val inFlight = HashMap<Long, FrameTiming>()
     private val window = ArrayDeque<FrameTiming>()
 
@@ -51,7 +59,20 @@ class PipelineStats(private val windowNs: Long = 1_000_000_000L) {
         if (inFlight.size > 64) inFlight.keys.sorted().take(inFlight.size - 64).forEach { inFlight.remove(it) }
     }
 
-    @Synchronized fun onPresented(frameId: Long, nowNs: Long) { window.lastOrNull { it.frameId == frameId }?.presentedNs = nowNs }
+    /**
+     * MediaCodec's frame-rendered callback carries a timestamp that some vendor codecs report
+     * on a clock of their own; this device produced render times days long. Only a delay that
+     * could plausibly be one is accepted, and render latency reads as unmeasured otherwise
+     * rather than as a fabricated number.
+     */
+    @Synchronized fun onPresented(frameId: Long, nowNs: Long) {
+        val timing = window.lastOrNull { it.frameId == frameId } ?: return
+        val delta = nowNs - timing.decodedNs
+        if (delta in 0..MAX_PLAUSIBLE_RENDER_NS) {
+            timing.presentedNs = nowNs
+            timing.presentedMeasured = true
+        }
+    }
 
     @Synchronized fun decodeLagFrames(): Int = (framesSubmitted - framesDecoded).toInt().coerceAtLeast(0)
 
@@ -60,13 +81,14 @@ class PipelineStats(private val windowNs: Long = 1_000_000_000L) {
         val n = window.size
         val sec = windowNs / 1e9f
         fun avg(f: (FrameTiming) -> Long): Float = if (n == 0) -1f else window.sumOf(f) / n / 1e6f
+        val rendered = window.filter { it.presentedMeasured }
         return Payloads.Stats(
             packetsReceived = packetsReceived, packetsLost = packetsLost,
             framesDelivered = framesDelivered, framesDropped = framesDropped, framesDecoded = framesDecoded,
             decodeLagFrames = decodeLagFrames(),
             reassemblyMs = avg { it.completeNs - it.firstPacketNs },
             decodeMs = avg { it.decodedNs - it.submitNs },
-            renderMs = avg { (it.presentedNs - it.decodedNs).coerceAtLeast(0) },
+            renderMs = if (rendered.isEmpty()) -1f else rendered.sumOf { it.presentedNs - it.decodedNs } / rendered.size / 1e6f,
             fps = n / sec,
             bitrateBps = (window.sumOf { it.bytes.toLong() } * 8 / sec).toLong(),
             clockOffsetNs = clockOffsetNs,
