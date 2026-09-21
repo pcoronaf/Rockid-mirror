@@ -6,7 +6,7 @@ import org.junit.Test
 
 class AdaptiveControllerTest {
     private fun ctl() = AdaptiveController(minBitrate = 1_000_000, maxBitrate = 4_000_000, maxFps = 60, stableIntervalsBeforeUpgrade = 3).apply { reset(3_000_000, 60) }
-    private val calm = AdaptiveInputs(0f, 20f, 8f, 0, 0f, 0)
+    private val calm = AdaptiveInputs(lossFraction = 0f, rttMs = 20f, minRttMs = 18f, encodedFps = 30f, encodeLatencyMs = 8f, receiverDecodeLagFrames = 0, droppedFramesPerSecond = 0f, sendQueueDrops = 0)
     private val mild = calm.copy(lossFraction = 0.02f)
     private val severe = calm.copy(lossFraction = 0.2f)
 
@@ -50,6 +50,33 @@ class AdaptiveControllerTest {
             assertEquals("one bad sample must not degrade", AdaptiveAction.None, c.evaluate(input))
             assertTrue(c.evaluate(input) is AdaptiveAction.SetBitrate)
         }
+    }
+
+    @Test
+    fun aSlowLinkIsNotTreatedAsCongestionWhenItsFloorIsSlow() {
+        // 159 ms RTT with a 155 ms floor is distance, not queuing: throttling cannot help.
+        val c = ctl()
+        repeat(10) { c.evaluate(calm.copy(rttMs = 159f, minRttMs = 155f)) }
+        assertEquals(3_000_000, c.level.bitrate.coerceAtMost(3_000_000))
+        assertEquals(60, c.level.fps)
+        assertEquals(0, c.level.resolutionStep)
+    }
+
+    @Test
+    fun delayAboveTheFloorStillCountsAsCongestion() {
+        val c = ctl()
+        val queuing = calm.copy(rttMs = 240f, minRttMs = 150f)
+        assertEquals(AdaptiveAction.None, c.evaluate(queuing))
+        assertTrue(c.evaluate(queuing) is AdaptiveAction.SetBitrate)
+    }
+
+    @Test
+    fun aSourceProducingNoFramesIsNeverThrottled() {
+        val c = ctl()
+        repeat(30) { c.evaluate(calm.copy(encodedFps = 0f, rttMs = 400f, lossFraction = 0.5f)) }
+        assertEquals(3_000_000, c.level.bitrate)
+        assertEquals(60, c.level.fps)
+        assertEquals(0, c.level.resolutionStep)
     }
 
     @Test

@@ -41,6 +41,7 @@ class AndroidPlatformAdapter(private val activity: Activity) : RokidPlatformAdap
     }
 
     private val inputs = MutableSharedFlow<GlassesInput>(extraBufferCapacity = 16)
+    private val raw = MutableSharedFlow<String>(extraBufferCapacity = 16)
     private val tapHandler = Handler(Looper.getMainLooper())
     private val tapDetector = TapDetector(DOUBLE_TAP_WINDOW_MS)
     private var pendingSingleTap: Runnable? = null
@@ -101,6 +102,9 @@ class AndroidPlatformAdapter(private val activity: Activity) : RokidPlatformAdap
      * rather than key events, double tap to exit still works.
      */
     fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.action == MotionEvent.ACTION_UP) {
+            raw.tryEmit("touch up ${event.eventTime - event.downTime}ms src=${event.source}")
+        }
         if (event.action == MotionEvent.ACTION_UP && event.eventTime - event.downTime < TAP_MAX_MS) {
             ReceiverLog.d(TAG, "touch_tap", "x" to event.x.toInt(), "y" to event.y.toInt())
             onTap()
@@ -120,13 +124,18 @@ class AndroidPlatformAdapter(private val activity: Activity) : RokidPlatformAdap
 
     override fun inputEvents(): Flow<GlassesInput> = inputs.asSharedFlow()
 
+    override fun rawInput(): Flow<String> = raw.asSharedFlow()
+
     /**
      * Call from `Activity.dispatchKeyEvent`. Mapping is a hypothesis (UNVERIFIED): community
      * Rokid apps navigate with D-pad style events from the temple touch bar. Every code is
      * logged so the M0 audit can pin the real mapping down.
      */
     fun onKeyEvent(event: KeyEvent): Boolean {
-        ReceiverLog.d(TAG, "key_event", "code" to event.keyCode, "action" to event.action, "repeat" to event.repeatCount, "long" to event.isLongPress)
+        ReceiverLog.d(TAG, "key_event", "code" to event.keyCode, "action" to event.action, "repeat" to event.repeatCount, "long" to event.isLongPress, "device" to event.device?.name)
+        if (event.action == KeyEvent.ACTION_UP) {
+            raw.tryEmit("key ${KeyEvent.keyCodeToString(event.keyCode)} (${event.keyCode}) from ${event.device?.name ?: "?"}")
+        }
         if (event.action != KeyEvent.ACTION_UP && !(event.action == KeyEvent.ACTION_DOWN && event.isLongPress)) return event.keyCode != KeyEvent.KEYCODE_BACK
         if (!event.isLongPress && event.keyCode in TAP_KEYCODES) {
             onTap()
@@ -137,7 +146,7 @@ class AndroidPlatformAdapter(private val activity: Activity) : RokidPlatformAdap
                 if (event.isLongPress) GlassesInput.LongPress else GlassesInput.Select
             KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_TAB -> GlassesInput.Forward
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_VOLUME_DOWN -> GlassesInput.Backward
-            KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> if (event.isLongPress) GlassesInput.LongPress else GlassesInput.Back
+            KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> GlassesInput.Back
             else -> GlassesInput.Unknown(event.keyCode)
         }
         inputs.tryEmit(input)

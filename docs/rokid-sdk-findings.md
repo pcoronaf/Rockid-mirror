@@ -21,6 +21,7 @@ calls a Rokid-specific API; see "Decision" below.
 | Decoded frames straight to a display Surface | Standard `MediaCodec.configure(format, surface, …)` | Android API — *UNVERIFIED on device* |
 | Touch-bar / input events | Temple touch bar (tap, forward/back swipe, long press), physical button; community apps use D-pad style `KeyEvent`s ("DpadNavigation" in `cursive-team/rokid-apps`), exact key codes not published | *UNVERIFIED*: `AndroidPlatformAdapter.onKeyEvent` logs every key code (`RokidRecv/Platform key_event`) — record them here |
 | IMU / head pose | InvenSense ICM-4x6xx (accel + gyro) present; Extentos ecosystem notes list IMU exposure through the Glasses SDK (W3C Generic-Sensor shape). Whether Android `SensorManager` rotation vectors are available to third-party apps is unknown | *UNVERIFIED*: `getSensorCapabilities()` reports at runtime |
+| Second display / app launching | **Confirmed refused on Android 16.** `ActivityOptions.setLaunchDisplayId` onto a virtual display created by an ordinary app fails with `Permission Denial: starting Intent ... with launchDisplayId=N`. No user-grantable permission lifts this; the display would have to be trusted, which is a system-only flag. The sender's own activity launches there fine, so extended-screen mode carries our own workspace. | measured on SM-S938B / Android 16 |
 | App lifecycle restrictions | Unknown (launcher behaviour, background limits, whether an Activity can hold the screen on). App uses `FLAG_KEEP_SCREEN_ON` and runs only while visible | *UNVERIFIED* |
 | Memory / process limits | Unknown beyond 2 GB total RAM | measure with `dumpsys meminfo` during Task D |
 
@@ -53,6 +54,11 @@ https://global.rokid.com/blogs/news (launch specs). Re-check vendor docs when wo
 
 - [ ] Confirm API level, display size and refresh rate (first-launch log line `RokidRecv/Activity platform`).
 - [ ] Confirm H.264 decoder name, `isHardwareAccelerated`, low-latency feature, sustained 480p30 then 720p30.
+- [x] **Temple double tap is delivered as a key event that the app must not consume.** Other
+      Rokid apps exit on a double tap because they let it fall through to the default Back
+      behaviour; this app was consuming `KEYCODE_BACK` and stayed open. `GlassesInput.Back` now
+      finishes the activity. Every raw code is also shown on the glasses (debug builds) and
+      logged as `RokidRecv/Platform raw_input`, so the exact code can still be recorded here.
 - [ ] Record temple touch bar key codes and fix the mapping in `AndroidPlatformAdapter.onKeyEvent`.
       The app now treats DPAD_CENTER / ENTER / NUMPAD_ENTER / BUTTON_A as a tap and detects a
       double tap from two of them within 320 ms (`TapDetector`), which exits the app. Taps that

@@ -75,12 +75,17 @@ class EglCanvasSurface(output: Surface, val width: Int, val height: Int) {
         }
     }
 
-    /** Paints one frame and presents it to the encoder with [presentationTimeNs] as its PTS. */
+    /**
+     * Paints one frame and presents it to the encoder with [presentationTimeNs] as its PTS.
+     * Must be called on the thread that constructed this object: EGL contexts are per-thread.
+     */
     fun drawFrame(presentationTimeNs: Long, paint: (Canvas) -> Unit) {
         canvas.drawColor(Color.BLACK, android.graphics.PorterDuff.Mode.SRC)
         paint(canvas)
 
-        EGL14.eglMakeCurrent(display, surface, surface, context)
+        if (!EGL14.eglMakeCurrent(display, surface, surface, context)) {
+            throw MirrorException(ErrorCode.RENDERER_FAILED, "eglMakeCurrent failed (0x${EGL14.eglGetError().toString(16)}); wrong thread?")
+        }
         GLES20.glViewport(0, 0, width, height)
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
@@ -102,8 +107,13 @@ class EglCanvasSurface(output: Surface, val width: Int, val height: Int) {
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
 
         EGLExt.eglPresentationTimeANDROID(display, surface, presentationTimeNs)
-        EGL14.eglSwapBuffers(display, surface)
+        if (!EGL14.eglSwapBuffers(display, surface)) {
+            throw MirrorException(ErrorCode.RENDERER_FAILED, "eglSwapBuffers failed (0x${EGL14.eglGetError().toString(16)})")
+        }
+        framesPresented++
     }
+
+    var framesPresented: Long = 0; private set
 
     fun release() {
         if (display != EGL14.EGL_NO_DISPLAY) {

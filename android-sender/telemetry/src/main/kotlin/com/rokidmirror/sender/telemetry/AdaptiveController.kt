@@ -4,6 +4,10 @@ package com.rokidmirror.sender.telemetry
 data class AdaptiveInputs(
     val lossFraction: Float,
     val rttMs: Float,
+    /** Lowest RTT seen this session: the link's floor, not something we can encode our way out of. */
+    val minRttMs: Float = -1f,
+    /** Frames the encoder actually produced in the period; zero means adaptation is pointless. */
+    val encodedFps: Float = -1f,
     /** Mean encoder latency T1-T0 over the period (backpressure signal for Surface encoders). */
     val encodeLatencyMs: Float,
     val receiverDecodeLagFrames: Int,
@@ -39,7 +43,10 @@ class AdaptiveController(
     companion object {
         const val LOSS_MILD = 0.01f
         const val LOSS_SEVERE = 0.08f
-        const val RTT_STRESS_MS = 80f
+        /** Queuing delay above the link's floor that counts as congestion. */
+        const val RTT_EXCESS_STRESS_MS = 60f
+        /** Fallback when no floor has been measured yet. */
+        const val RTT_STRESS_MS = 150f
         const val ENCODE_LATENCY_STRESS_MS = 40f
         const val DECODE_LAG_STRESS_FRAMES = 3
         const val MAX_RESOLUTION_STEP = 2
@@ -60,9 +67,17 @@ class AdaptiveController(
     /** Called once per period; returns at most one action so changes stay observable. */
     fun evaluate(input: AdaptiveInputs): AdaptiveAction {
         period++
+        // Nothing is being encoded: lowering the bitrate cannot help and only wrecks the
+        // stream for when frames do start. This happened on a source that produced no frames
+        // at all, which the controller happily throttled to nothing.
+        if (input.encodedFps in 0f..0.5f) { stressCount = 0; return AdaptiveAction.None }
+
+        // A link with a 150 ms floor is not congested, it is just far away. Only delay ABOVE
+        // that floor means queues are building, which is what reducing bitrate can fix.
+        val rttStressed = if (input.minRttMs >= 0f) input.rttMs > input.minRttMs + RTT_EXCESS_STRESS_MS else input.rttMs > RTT_STRESS_MS
         val severe = input.lossFraction >= LOSS_SEVERE || input.droppedFramesPerSecond >= 5f
         val stressed = severe || input.lossFraction >= LOSS_MILD ||
-            (input.rttMs > RTT_STRESS_MS) || input.encodeLatencyMs > ENCODE_LATENCY_STRESS_MS ||
+            rttStressed || input.encodeLatencyMs > ENCODE_LATENCY_STRESS_MS ||
             input.receiverDecodeLagFrames >= DECODE_LAG_STRESS_FRAMES || input.sendQueueDrops > 0
 
         if (severe && period - lastKeyframeRequestPeriod >= 2 && input.lossFraction >= LOSS_SEVERE) {

@@ -139,6 +139,14 @@ class ReceiverSession(
             }
         }
         scope.launch { platform.inputEvents().collect { onInput(it) } }
+        // Surfacing raw codes on the glasses is the only practical way to learn what the temple
+        // bar actually sends on this hardware.
+        scope.launch {
+            platform.rawInput().collect { description ->
+                ReceiverLog.i(TAG, "raw_input", "event" to description)
+                if (debugOverlay) { showChrome(); overlay.setHint(description) }
+            }
+        }
         if (platform.getSensorCapabilities().rotationVector != Support.UNAVAILABLE) {
             headJob = scope.launch { platform.headPose().collect { pose -> head.onPose(pose.yawRad, pose.pitchRad)?.let { surface.setViewport(it) } } }
         }
@@ -326,8 +334,23 @@ class ReceiverSession(
             GlassesInput.DoubleTap -> { overlay.setHint("Closing…"); onExitRequested() }
             GlassesInput.Forward -> { showChrome(); stepZoom(1.25f) }
             GlassesInput.Backward -> { showChrome(); stepZoom(0.8f) }
-            GlassesInput.LongPress -> { head.recenter(); surface.setViewport(baseViewport); overlay.setHint("Recentered"); scope.launch { delay(1200); overlay.setHint(null) } }
-            GlassesInput.Back -> { if (state == State.ADVERTISING || state == State.RECONNECT_WAIT) { onForgetAllSenders(); overlay.setHint("All paired phones forgotten"); scope.launch { delay(2000); overlay.setHint(null) } } }
+            GlassesInput.LongPress -> when (state) {
+                // Recentring means nothing with no picture, so idle long press is "forget all senders".
+                State.ADVERTISING, State.RECONNECT_WAIT -> {
+                    onForgetAllSenders()
+                    showChrome(sticky = true)
+                    overlay.setHint("All paired phones forgotten")
+                    scope.launch { delay(2500); overlay.setHint(null) }
+                }
+                else -> {
+                    head.recenter(); surface.setViewport(baseViewport)
+                    showChrome(); overlay.setHint("Recentered")
+                    scope.launch { delay(1200); overlay.setHint(null) }
+                }
+            }
+            // Back leaves the app. On this hardware a temple double tap arrives as Back, which
+            // is why every other Rokid app closes on it; consuming it kept us open.
+            GlassesInput.Back -> { overlay.setHint("Closing…"); onExitRequested() }
             is GlassesInput.Unknown -> overlay.setHint("Key ${input.keyCode}")
         }
     }
@@ -384,7 +407,7 @@ class ReceiverSession(
         // Text is useful while connecting and in the way once the picture is up.
         if (next == State.STREAMING) showChrome() else { chromeJob?.cancel(); overlay.chromeVisible = true }
         if (next != State.STREAMING) overlay.setDebug(null)
-        if (next == State.ADVERTISING) overlay.setHint("Open Rokid Mirror on the phone · double tap the temple to exit")
+        if (next == State.ADVERTISING) overlay.setHint("Open Rokid Mirror on the phone · double tap the temple to exit · long press forgets phones")
         if (next == State.CONNECTED || next == State.STREAMING) overlay.setHint(null)
     }
 

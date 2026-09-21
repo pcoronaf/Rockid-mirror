@@ -88,6 +88,21 @@ class ExtendedDisplayController(private val context: Context) {
             .toList()
     }
 
+    /** Starts one of our own activities on the extended display; same-app launches are allowed. */
+    fun launchOwnActivity(intent: Intent): Result<Unit> {
+        val id = displayId
+        if (id == Display.INVALID_DISPLAY) return Result.failure(MirrorException(ErrorCode.PLATFORM_API_UNAVAILABLE, "extended display is not running"))
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        return try {
+            context.startActivity(intent, ActivityOptions.makeBasic().setLaunchDisplayId(id).toBundle())
+            MirrorLog.i(TAG, "workspace_launched", "display" to id)
+            Result.success(Unit)
+        } catch (e: Exception) {
+            MirrorLog.e(TAG, "workspace_launch_failed", e)
+            Result.failure(MirrorException(ErrorCode.PLATFORM_API_UNAVAILABLE, e.message, e))
+        }
+    }
+
     /**
      * Starts an app on the extended display. A failure here is usually platform policy refusing
      * a cross-app launch onto a non-trusted virtual display, which no permission can lift.

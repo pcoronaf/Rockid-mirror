@@ -23,6 +23,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -118,11 +119,28 @@ fun HomeScreen(
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Extended screen (display ${session.extendedDisplayId})", style = MaterialTheme.typography.titleSmall)
                     Text(
-                        "The glasses are a second screen, not a copy of the phone. Pick an app to open there, " +
-                            "then use the Mouse pad to work in it. Android may refuse to move some apps to a second display.",
+                        "The glasses are a second screen, not a copy of the phone. Type an address to open it " +
+                            "there and use the Mouse pad to scroll and tap. Android refuses to move other apps " +
+                            "onto a display an ordinary app created, so the workspace below is what it can show.",
                         style = MaterialTheme.typography.bodySmall,
                     )
-                    Button(onClick = { showApps = true }) { Text("Open an app on the glasses") }
+                    var query by remember { mutableStateOf("") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            label = { Text("Address or search") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Button(onClick = { session.openOnGlasses(query) }, enabled = query.isNotBlank()) { Text("Open") }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { session.workspaceBack() }, modifier = Modifier.weight(1f)) { Text("Back") }
+                        OutlinedButton(onClick = { session.workspaceHome() }, modifier = Modifier.weight(1f)) { Text("Start") }
+                        OutlinedButton(onClick = { session.workspaceReload() }, modifier = Modifier.weight(1f)) { Text("Reload") }
+                    }
+                    TextButton(onClick = { showApps = true }) { Text("Try another app anyway") }
                 }
             }
             if (showApps) {

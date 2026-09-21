@@ -18,6 +18,7 @@ import com.rokidmirror.protocol.control.MirrorException
 import com.rokidmirror.protocol.control.Payloads
 import com.rokidmirror.protocol.viewport.ViewportState
 import com.rokidmirror.sender.app.AppContainer
+import com.rokidmirror.sender.app.GlassesWorkspaceActivity
 import com.rokidmirror.sender.app.PointerService
 import com.rokidmirror.sender.capture.CaptureEvent
 import com.rokidmirror.sender.capture.CaptureGeometry
@@ -283,6 +284,10 @@ class MirrorSession(private val context: Context, private val container: AppCont
                 val surface = startEncoder(source)
                 extended.start(width, height, dpi, surface)
                 PointerService.instance?.targetDisplayId = extended.displayId
+                // Put our own workspace there immediately: an own-content display with nothing
+                // on it produces no frames at all, which looks exactly like a broken stream.
+                extended.launchOwnActivity(Intent(context, GlassesWorkspaceActivity::class.java))
+                    .onFailure { event("Could not open the glasses workspace: ${it.message}") }
                 beginStream("Extended screen", source)
                 event("Extended display ${width}x$height @${dpi}dpi (id ${extended.displayId})")
             } catch (e: MirrorException) {
@@ -306,6 +311,19 @@ class MirrorSession(private val context: Context, private val container: AppCont
         result.onSuccess { event("Launched ${app.label} on the glasses") }
             .onFailure { event("Could not launch ${app.label}: ${(it as? MirrorException)?.details ?: it.message}") }
     }
+
+    /** Opens an address in the glasses workspace. */
+    fun openOnGlasses(query: String) {
+        val workspace = GlassesWorkspaceActivity.instance
+        if (workspace == null) { event("The glasses workspace is not running"); return }
+        workspace.open(query)
+        event("Opened on the glasses")
+    }
+
+    fun workspaceBack() = GlassesWorkspaceActivity.instance?.back()
+    fun workspaceHome() = GlassesWorkspaceActivity.instance?.home()
+    fun workspaceReload() = GlassesWorkspaceActivity.instance?.reload()
+    val workspaceRunning: Boolean get() = GlassesWorkspaceActivity.isRunning
 
     /** Development path: streams a generated picture (no MediaProjection consent needed). */
     suspend fun startSyntheticStreaming(pattern: SyntheticPattern = SyntheticPattern.TEST_PATTERN) {
@@ -369,6 +387,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
             if (encoderConfig == null && synthetic == null) return
             synthetic?.stop(); synthetic = null
             if (isExtended) {
+                runCatching { GlassesWorkspaceActivity.instance?.finish() }
                 runCatching { extended.stop() }
                 PointerService.instance?.targetDisplayId = android.view.Display.DEFAULT_DISPLAY
                 isExtended = false
@@ -526,6 +545,8 @@ class MirrorSession(private val context: Context, private val container: AppCont
         val inputs = AdaptiveInputs(
             lossFraction = t.lossFraction,
             rttMs = t.rttMs,
+            minRttMs = t.minRttMs,
+            encodedFps = lat?.fps ?: -1f,
             encodeLatencyMs = lat?.encodeMsAvg ?: 0f,
             receiverDecodeLagFrames = rs?.decodeLagFrames ?: 0,
             droppedFramesPerSecond = 0f,
@@ -617,7 +638,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
      */
     val pointerInjectionAvailable: Boolean
         get() {
-            if (isExtended) return extended.isActive && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R
+            if (isExtended) return extended.isActive
             if (isSynthetic) return false
             val src = sourceGeometry ?: return false
             val disp = captureDisplayGeometry ?: return false
@@ -649,12 +670,32 @@ class MirrorSession(private val context: Context, private val container: AppCont
 
     fun pointerTap() = withInjector("tap") { svc, x, y -> svc.tap(x, y) }
     fun pointerLongPress() = withInjector("long press") { svc, x, y -> svc.longPress(x, y) }
-    fun pointerScroll(dxPixels: Float, dyPixels: Float) = withInjector("scroll") { svc, x, y -> svc.scroll(x, y, dxPixels, dyPixels) }
+    fun pointerScroll(dxPixels: Float, dyPixels: Float) {
+        lastScroll = dxPixels to dyPixels
+        withInjector("scroll") { svc, x, y -> svc.scroll(x, y, dxPixels, dyPixels) }
+    }
+    private var lastScroll: Pair<Float, Float>? = null
     fun pointerBack() = withInjector("back") { svc, _, _ -> svc.back() }
     fun pointerHome() = withInjector("home") { svc, _, _ -> svc.home() }
     fun pointerRecents() = withInjector("recents") { svc, _, _ -> svc.recents() }
 
     private fun withInjector(what: String, block: (PointerService, Float, Float) -> Unit) {
+        // In extended mode the content is our own view hierarchy, so events go straight in.
+        // That needs no accessibility service and cannot be refused by the platform.
+        val workspace = if (isExtended) GlassesWorkspaceActivity.instance else null
+        if (workspace != null) {
+            val (px, py) = pointer.toSourcePixels()
+            when (what) {
+                "tap" -> workspace.tap(px.toFloat(), py.toFloat())
+                "long press" -> workspace.longPress(px.toFloat(), py.toFloat())
+                "back" -> workspace.back()
+                "home" -> workspace.home()
+                "recents" -> workspace.reload()
+                else -> lastScroll?.let { (dx, dy) -> workspace.scroll(px.toFloat(), py.toFloat(), dx, dy) }
+            }
+            encoder.requestKeyFrame()
+            return
+        }
         val svc = PointerService.instance
         if (svc == null) { event("Pointer service is off; enable it in Accessibility settings"); return }
         if (!pointerInjectionAvailable && what != "back" && what != "home" && what != "recents") {

@@ -44,6 +44,17 @@
             </intent-filter>
         </activity>
 
+        <!-- The extended screen's own content. Android refuses to move other apps to a virtual
+             display an ordinary app created, but our own activity is allowed there. -->
+        <activity
+            android:name=".app.GlassesWorkspaceActivity"
+            android:exported="false"
+            android:label="@string/workspace_label"
+            android:resizeableActivity="true"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.RokidMirror"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density|smallestScreenSize" />
+
         <!-- Mouse mode: the only no-root way to deliver a tap to another app. Configured with no
              event types and no window-content access, so it cannot read the screen. -->
         <service

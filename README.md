@@ -83,11 +83,12 @@ From community and vendor documentation (details and sources in `docs/rokid-sdk-
    Clicks need the *Rokid Mirror pointer* accessibility service, which the app offers to open in
    Settings; without it the cursor still moves so you can point at things. Clicks require
    whole-screen mirroring. See `docs/security.md` for exactly what that service can and cannot do.
-7. **Extended screen** makes the glasses a second display rather than a copy of the phone: it
-   renders at the glasses' own resolution (1:1, so text stays sharp), needs no capture consent,
-   and a picker launches an app onto it. Mouse mode then targets that display, so you can work
-   in the app on the glasses while the phone shows something else. Android can refuse to move a
-   given app to a second display, and the app says so when that happens.
+7. **Extended screen** makes the glasses a second display rather than a copy of the phone. It
+   renders at the glasses' own resolution (1:1, so text stays sharp) and needs no capture
+   consent. Android refuses to move *other* apps onto a display an ordinary app created (tested
+   and confirmed on Android 16), so the second screen carries a workspace of our own: type an
+   address on the phone and browse it on the glasses, driven by the Mouse pad. Because that
+   content belongs to the sender, its input needs no accessibility service at all.
 8. On the glasses, **double tap the temple** to exit, as in other Rokid apps. A single tap shows
    or hides the heads-up text, which hides itself a few seconds after the picture starts. Swipes
    step the zoom and a long press recenters. Warnings and the pairing code are never hidden, and

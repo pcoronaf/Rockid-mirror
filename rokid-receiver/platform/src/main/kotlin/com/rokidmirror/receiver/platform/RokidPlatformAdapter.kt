@@ -53,6 +53,12 @@ interface RokidPlatformAdapter {
     fun getInputCapabilities(): InputCapabilities
     fun getSensorCapabilities(): SensorCapabilities
     fun inputEvents(): Flow<GlassesInput>
+
+    /**
+     * Human-readable description of every raw input event, so the temple bar's real key codes
+     * can be identified on a device with no visible log.
+     */
+    fun rawInput(): Flow<String>
     /** Emits nothing when no orientation sensor is available. */
     fun headPose(): Flow<HeadPose>
 }

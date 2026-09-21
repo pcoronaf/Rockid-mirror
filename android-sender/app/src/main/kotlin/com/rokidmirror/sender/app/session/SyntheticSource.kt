@@ -26,7 +26,7 @@ enum class SyntheticPattern(val label: String, val sourceName: String) {
  * Canvas, which is what made the earlier version fail on device.
  */
 class SyntheticSource(
-    surface: Surface,
+    private val output: Surface,
     private val width: Int,
     private val height: Int,
     private val fps: Int,
@@ -34,7 +34,6 @@ class SyntheticSource(
 ) {
     private companion object { const val TAG = "Synthetic" }
 
-    private val egl = EglCanvasSurface(surface, width, height)
     private val painter: Painter = when (pattern) {
         SyntheticPattern.TEST_PATTERN -> TestPatternPainter(width, height)
         SyntheticPattern.MATRIX_RAIN -> MatrixRainPainter(width, height)
@@ -56,6 +55,15 @@ class SyntheticSource(
     }
 
     private fun loop() {
+        // An EGL context belongs to the thread that made it current. Creating it anywhere but
+        // here left it bound to the calling thread, so every eglMakeCurrent on this thread
+        // failed with BAD_ACCESS, no buffers ever reached the encoder and the stream was empty.
+        val egl = try {
+            EglCanvasSurface(output, width, height)
+        } catch (e: Throwable) {
+            MirrorLog.e(TAG, "egl_setup_failed", e)
+            return
+        }
         val frameNs = 1_000_000_000L / fps
         var next = System.nanoTime()
         var frame = 0L
