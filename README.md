@@ -86,10 +86,12 @@ From community and vendor documentation (details and sources in `docs/rokid-sdk-
    whole-screen mirroring. See `docs/security.md` for exactly what that service can and cannot do.
 7. **Extended screen** makes the glasses a second display rather than a copy of the phone. It
    renders at the glasses' own resolution (1:1, so text stays sharp) and needs no capture
-   consent. Android refuses to move *other* apps onto a display an ordinary app created (tested
-   and confirmed on Android 16), so the second screen carries a workspace of our own: type an
-   address on the phone and browse it on the glasses, driven by the Mouse pad. Because that
-   content belongs to the sender, its input needs no accessibility service at all.
+   consent. Android refuses to launch *any* activity onto a display an ordinary app created,
+   including the app's own (tested and confirmed on Android 16), so the second screen carries a
+   workspace shown as a window: type an address on the phone and browse it on the glasses,
+   driven by the Mouse pad. Because that content belongs to the sender, its input needs no
+   accessibility service. If the platform declines the window too, the app offers "Display over
+   other apps" as a second route.
 8. On the glasses, **double tap the temple** to exit, as in other Rokid apps. A single tap shows
    or hides the heads-up text, which hides itself a few seconds after the picture starts. Swipes
    step the zoom and a long press recenters. Warnings and the pairing code are never hidden, and

@@ -31,6 +31,10 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import android.hardware.display.DisplayManager
+import android.view.Display
+import androidx.compose.runtime.DisposableEffect
+import com.rokidmirror.sender.app.GlassesWorkspace
 import com.rokidmirror.sender.app.MirrorApplication
 import com.rokidmirror.sender.app.MirrorService
 import com.rokidmirror.sender.capture.CaptureMode
@@ -72,6 +76,24 @@ class MainActivity : ComponentActivity() {
                     pendingLabel = if (mode == CaptureMode.WHOLE_DISPLAY) "Phone" else "App"
                     scope.launch { captureLauncher.launch(session.prepareCapture(mode)) }
                 }
+                // The extended screen's content is a window on that display, owned here: the
+                // platform will not let any activity be launched onto it.
+                val extendedDisplayId by session.extendedDisplayId.collectAsState()
+                DisposableEffect(extendedDisplayId) {
+                    if (extendedDisplayId != Display.INVALID_DISPLAY) {
+                        val manager = getSystemService(DisplayManager::class.java)
+                        val display = manager?.getDisplay(extendedDisplayId)
+                        if (display == null) {
+                            session.onWorkspaceUnavailable("display $extendedDisplayId disappeared")
+                        } else {
+                            GlassesWorkspace.show(this@MainActivity, display)
+                                .onSuccess { session.attachWorkspace(it) }
+                                .onFailure { session.onWorkspaceUnavailable(it.message ?: "unknown") }
+                        }
+                    }
+                    onDispose { if (extendedDisplayId != Display.INVALID_DISPLAY) session.detachWorkspace() }
+                }
+
                 val prompt by session.pairingPrompt.collectAsState()
                 prompt?.let { p -> PairingCodeDialog(receiverName = p.receiverName, onSubmit = session::submitPairingCode, onCancel = session::cancelPairing) }
 

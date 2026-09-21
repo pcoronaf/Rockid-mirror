@@ -13,6 +13,9 @@
          without a foreground service the platform tears the socket down on lock. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Fallback route for putting the extended screen's content on the glasses display when
+         the platform declines a Presentation. Optional: the app asks only if that happens. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- Extended-screen mode lists apps that have a launcher entry so they can be started on the
          glasses display. This is the sanctioned alternative to QUERY_ALL_PACKAGES. -->
@@ -43,17 +46,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <!-- The extended screen's own content. Android refuses to move other apps to a virtual
-             display an ordinary app created, but our own activity is allowed there. -->
-        <activity
-            android:name=".app.GlassesWorkspaceActivity"
-            android:exported="false"
-            android:label="@string/workspace_label"
-            android:resizeableActivity="true"
-            android:excludeFromRecents="true"
-            android:theme="@style/Theme.RokidMirror"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density|smallestScreenSize" />
 
         <!-- Mouse mode: the only no-root way to deliver a tap to another app. Configured with no
              event types and no window-content access, so it cannot read the screen. -->

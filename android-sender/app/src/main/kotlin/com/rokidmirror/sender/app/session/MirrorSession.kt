@@ -18,7 +18,7 @@ import com.rokidmirror.protocol.control.MirrorException
 import com.rokidmirror.protocol.control.Payloads
 import com.rokidmirror.protocol.viewport.ViewportState
 import com.rokidmirror.sender.app.AppContainer
-import com.rokidmirror.sender.app.GlassesWorkspaceActivity
+import com.rokidmirror.sender.app.GlassesWorkspace
 import com.rokidmirror.sender.app.PointerService
 import com.rokidmirror.sender.capture.CaptureEvent
 import com.rokidmirror.sender.capture.CaptureGeometry
@@ -288,10 +288,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
                 val surface = startEncoder(source)
                 extended.start(width, height, dpi, surface)
                 PointerService.instance?.targetDisplayId = extended.displayId
-                // Put our own workspace there immediately: an own-content display with nothing
-                // on it produces no frames at all, which looks exactly like a broken stream.
-                extended.launchOwnActivity(Intent(context, GlassesWorkspaceActivity::class.java))
-                    .onFailure { event("Could not open the glasses workspace: ${it.message}") }
+                _extendedDisplayId.value = extended.displayId
                 beginStream("Extended screen", source)
                 event("Extended display ${width}x$height @${dpi}dpi (id ${extended.displayId})")
             } catch (e: MirrorException) {
@@ -307,8 +304,32 @@ class MirrorSession(private val context: Context, private val container: AppCont
     /** Apps with a launcher entry, for the extended-screen picker. */
     fun launchableApps(): List<LaunchableApp> = runCatching { extended.launchableApps() }.getOrDefault(emptyList())
 
-    val extendedDisplayId: Int get() = extended.displayId
+    private val _extendedDisplayId = MutableStateFlow(android.view.Display.INVALID_DISPLAY)
+    /** Display the glasses workspace must be shown on, or INVALID_DISPLAY when idle. */
+    val extendedDisplayId: StateFlow<Int> = _extendedDisplayId.asStateFlow()
     val isExtendedActive: Boolean get() = extended.isActive
+
+    /**
+     * The workspace is a window, not an activity: Android refuses activity launches onto a
+     * virtual display an ordinary app created, including the app's own. The UI owns the window
+     * and hands it here so control commands and the pointer can reach it.
+     */
+    fun attachWorkspace(workspace: GlassesWorkspace) {
+        this.workspace = workspace
+        event("Glasses workspace ready (${workspace.host})")
+    }
+
+    fun onWorkspaceUnavailable(reason: String) {
+        workspace = null
+        event("The glasses display cannot show a window: $reason")
+    }
+
+    fun detachWorkspace() {
+        workspace?.let { runCatching { it.dismiss() } }
+        workspace = null
+    }
+
+    private var workspace: GlassesWorkspace? = null
 
     fun launchOnExtendedDisplay(app: LaunchableApp) {
         val result = extended.launch(app.packageName)
@@ -318,16 +339,16 @@ class MirrorSession(private val context: Context, private val container: AppCont
 
     /** Opens an address in the glasses workspace. */
     fun openOnGlasses(query: String) {
-        val workspace = GlassesWorkspaceActivity.instance
+        val workspace = workspace
         if (workspace == null) { event("The glasses workspace is not running"); return }
         workspace.open(query)
         event("Opened on the glasses")
     }
 
-    fun workspaceBack() = GlassesWorkspaceActivity.instance?.back()
-    fun workspaceHome() = GlassesWorkspaceActivity.instance?.home()
-    fun workspaceReload() = GlassesWorkspaceActivity.instance?.reload()
-    val workspaceRunning: Boolean get() = GlassesWorkspaceActivity.isRunning
+    fun workspaceBack() = workspace?.back()
+    fun workspaceHome() = workspace?.home()
+    fun workspaceReload() = workspace?.reload()
+    val workspaceRunning: Boolean get() = workspace != null
 
     /** Development path: streams a generated picture (no MediaProjection consent needed). */
     suspend fun startSyntheticStreaming(pattern: SyntheticPattern = SyntheticPattern.TEST_PATTERN) {
@@ -391,7 +412,8 @@ class MirrorSession(private val context: Context, private val container: AppCont
             if (encoderConfig == null && synthetic == null) return
             synthetic?.stop(); synthetic = null
             if (isExtended) {
-                runCatching { GlassesWorkspaceActivity.instance?.finish() }
+                detachWorkspace()
+                _extendedDisplayId.value = android.view.Display.INVALID_DISPLAY
                 runCatching { extended.stop() }
                 PointerService.instance?.targetDisplayId = android.view.Display.DEFAULT_DISPLAY
                 isExtended = false
@@ -686,7 +708,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
     private fun withInjector(what: String, block: (PointerService, Float, Float) -> Unit) {
         // In extended mode the content is our own view hierarchy, so events go straight in.
         // That needs no accessibility service and cannot be refused by the platform.
-        val workspace = if (isExtended) GlassesWorkspaceActivity.instance else null
+        val workspace = if (isExtended) this.workspace else null
         if (workspace != null) {
             val (px, py) = pointer.toSourcePixels()
             when (what) {

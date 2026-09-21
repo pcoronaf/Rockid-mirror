@@ -56,6 +56,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.size
 import androidx.core.graphics.drawable.toBitmap
+import com.rokidmirror.sender.app.GlassesWorkspace
 import com.rokidmirror.sender.app.PointerService
 import com.rokidmirror.sender.app.session.SyntheticPattern
 import com.rokidmirror.sender.capture.CaptureMode
@@ -124,6 +125,18 @@ fun HomeScreen(
                             "onto a display an ordinary app created, so the workspace below is what it can show.",
                         style = MaterialTheme.typography.bodySmall,
                     )
+                    val ctx = LocalContext.current
+                    if (!session.workspaceRunning) {
+                        Text(
+                            "The glasses display has no window yet. If Android declined, granting " +
+                                "\"Display over other apps\" gives the app a second route to put content there.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        Button(onClick = { ctx.startActivity(GlassesWorkspace.overlayPermissionIntent(ctx)) }) {
+                            Text("Allow display over other apps")
+                        }
+                    }
                     var query by remember { mutableStateOf("") }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(
