@@ -25,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -162,6 +163,32 @@ fun HomeScreen(
                     onPick = { showApps = false; session.launchOnExtendedDisplay(it) },
                     onDismiss = { showApps = false },
                 )
+            }
+        }
+
+        val visionOn by session.visionEnabled.collectAsState()
+        val visionContrast by session.visionContrast.collectAsState()
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Glasses camera view", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                    Switch(checked = visionOn, onCheckedChange = { session.setVisionMode(it) }, enabled = connected)
+                }
+                Text(
+                    "Shows the glasses' own camera on the panel with the contrast lifted, and puts four " +
+                        "corners around each person facing you. It runs entirely on the glasses: nothing is " +
+                        "recorded, nothing is sent anywhere, nobody is identified, and the glasses' own " +
+                        "camera indicator behaves exactly as it always does.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (visionOn) {
+                    Text("Contrast", style = MaterialTheme.typography.bodySmall)
+                    Slider(
+                        value = visionContrast,
+                        onValueChange = { session.setVisionContrast(it) },
+                        valueRange = 0.8f..3f,
+                    )
+                }
             }
         }
 

@@ -24,6 +24,7 @@ import com.rokidmirror.receiver.control.ReceiverSession
 import com.rokidmirror.receiver.control.SessionDecoder
 import com.rokidmirror.receiver.control.SessionOverlay
 import com.rokidmirror.receiver.control.SessionSurface
+import com.rokidmirror.receiver.control.SessionVision
 import com.rokidmirror.receiver.control.SessionTransport
 import com.rokidmirror.receiver.platform.ContextPlatformInfo
 import com.rokidmirror.receiver.platform.InputCapabilities
@@ -46,6 +47,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 interface DisplayTarget {
     val surface: SessionSurface
     val decoder: SessionDecoder
+    val vision: SessionVision
     val overlay: SessionOverlay
     val platform: RokidPlatformAdapter
 }
@@ -119,7 +121,7 @@ class ReceiverService : Service() {
         transport = ReceiverTransport(app.identity, app.credentials, { capabilities }, transportListener)
         session = ReceiverSession(
             platforms = platforms,
-            surface = surfaceBridge, decoder = decoderBridge, transport = transportBridge, overlay = overlayBridge,
+            surface = surfaceBridge, decoder = decoderBridge, vision = visionBridge, transport = transportBridge, overlay = overlayBridge,
             stats = stats, scope = scope, debugOverlay = BuildConfig.DEBUG,
             onForgetAllSenders = { app.credentials.forgetAll() },
             onExitRequested = { stopEverything() },
@@ -160,6 +162,7 @@ class ReceiverService : Service() {
 
     fun detach(displayTarget: DisplayTarget) {
         if (target !== displayTarget) return
+        runCatching { displayTarget.vision.setEnabled(false) }
         target = null
         platforms.value = null
         session.onDisplayDetached()
@@ -251,6 +254,16 @@ class ReceiverService : Service() {
         override fun stop() { target?.decoder?.stop() }
         override val isConfigured: Boolean get() = target?.decoder?.isConfigured ?: false
         override val name: String get() = target?.decoder?.name ?: "-"
+    }
+
+    private val visionBridge = object : SessionVision {
+        override val available: Boolean get() = target?.vision?.available ?: false
+        override val running: Boolean get() = target?.vision?.running ?: false
+        override fun setEnabled(enabled: Boolean) {
+            if (enabled && target == null) { requestUi(); return }
+            target?.vision?.setEnabled(enabled)
+        }
+        override fun setGain(gain: Float) { target?.vision?.setGain(gain) }
     }
 
     private val transportBridge = object : SessionTransport {

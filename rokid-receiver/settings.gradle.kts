@@ -28,4 +28,4 @@ rootProject.name = "rokid-mirror-receiver"
 
 includeBuild("../protocol/kotlin")
 
-include(":app", ":platform", ":decoder", ":transport", ":renderer", ":control", ":telemetry")
+include(":app", ":platform", ":decoder", ":transport", ":renderer", ":control", ":telemetry", ":camera")

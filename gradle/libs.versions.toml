@@ -13,6 +13,7 @@ coreKtx = "1.16.0"
 datastore = "1.1.7"
 junit = "4.13.2"
 jmdns = "3.5.9"
+mlkitFace = "16.1.7"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -33,6 +34,8 @@ compose-material3 = { module = "androidx.compose.material3:material3" }
 compose-material-icons = { module = "androidx.compose.material:material-icons-core" }
 junit = { module = "junit:junit", version.ref = "junit" }
 jmdns = { module = "org.jmdns:jmdns", version.ref = "jmdns" }
+# Bundled model: runs entirely on device and needs no Google Play services.
+mlkit-face-detection = { module = "com.google.mlkit:face-detection", version.ref = "mlkitFace" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

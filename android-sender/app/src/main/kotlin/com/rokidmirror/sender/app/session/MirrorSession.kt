@@ -655,6 +655,34 @@ class MirrorSession(private val context: Context, private val container: AppCont
 
     fun requestKeyframe() = encoder.requestKeyFrame()
 
+    // ---- glasses camera view -------------------------------------------------------------
+
+    private val _visionEnabled = MutableStateFlow(false)
+    /** Camera view on the glasses. Nothing is captured here; the phone only asks for the mode. */
+    val visionEnabled: StateFlow<Boolean> = _visionEnabled.asStateFlow()
+    private val _visionContrast = MutableStateFlow(1.4f)
+    val visionContrast: StateFlow<Float> = _visionContrast.asStateFlow()
+
+    fun setVisionMode(enabled: Boolean) {
+        _visionEnabled.value = enabled
+        sendVision()
+        event(if (enabled) "Camera view on the glasses" else "Camera view off")
+    }
+
+    fun setVisionContrast(contrast: Float) {
+        _visionContrast.value = contrast
+        sendVision()
+    }
+
+    private fun sendVision() {
+        scope.launch {
+            if (transport.state.value !is TransportState.Connected) { event("Not connected to the glasses"); return@launch }
+            runCatching {
+                transport.send(MessageType.VISION_SET, Payloads.Vision.serializer(), Payloads.Vision(_visionEnabled.value, _visionContrast.value))
+            }.onFailure { event("Could not reach the glasses: ${it.message}") }
+        }
+    }
+
     // ---- mouse mode ---------------------------------------------------------------------
 
     /**

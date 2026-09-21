@@ -21,12 +21,15 @@ import com.rokidmirror.receiver.BuildConfig
 import com.rokidmirror.receiver.control.SessionDecoder
 import com.rokidmirror.receiver.control.SessionOverlay
 import com.rokidmirror.receiver.control.SessionSurface
+import com.rokidmirror.receiver.control.SessionVision
 import com.rokidmirror.receiver.decoder.DecodeResult
 import com.rokidmirror.receiver.decoder.DecoderFormat
 import com.rokidmirror.receiver.decoder.MediaCodecVideoDecoder
 import com.rokidmirror.receiver.platform.AndroidPlatformAdapter
 import com.rokidmirror.receiver.platform.DisplayInfo
 import com.rokidmirror.receiver.platform.RokidPlatformAdapter
+import com.rokidmirror.receiver.camera.VisionController
+import com.rokidmirror.receiver.camera.VisionView
 import com.rokidmirror.receiver.renderer.OverlayView
 import com.rokidmirror.receiver.renderer.ViewportRenderer
 import com.rokidmirror.receiver.telemetry.ReceiverLog
@@ -37,7 +40,10 @@ import com.rokidmirror.receiver.telemetry.ReceiverLog
  * this window no longer ends the session.
  */
 class ReceiverActivity : Activity() {
-    private companion object { const val TAG = "Activity" }
+    private companion object {
+        const val TAG = "Activity"
+        const val CAMERA_PERMISSION_REQUEST = 91
+    }
 
     private lateinit var platform: AndroidPlatformAdapter
     private lateinit var renderer: ViewportRenderer
@@ -47,6 +53,9 @@ class ReceiverActivity : Activity() {
     private var surfaceHolder: SurfaceHolder? = null
     private var pendingFormat: DecoderFormat? = null
     private var attached = false
+    private lateinit var visionView: VisionView
+    private var vision: VisionController? = null
+    private var visionWanted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,7 +65,9 @@ class ReceiverActivity : Activity() {
         val host = FrameLayout(this).apply { clipChildren = true }
         renderer = ViewportRenderer(host, platform.createRenderTarget(), display)
         overlay = OverlayView(this).apply { debugEnabled = BuildConfig.DEBUG }
+        visionView = VisionView(this).apply { visibility = View.GONE }
         root.addView(host, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        root.addView(visionView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         root.addView(overlay, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         setContentView(root)
         overlay.setStatus("Rokid Mirror starting…")
@@ -74,6 +85,13 @@ class ReceiverActivity : Activity() {
         }
         renderer.onSurfaceLost = { surfaceHolder = null; decoder?.stop() }
 
+        vision = VisionController(this, visionView) { status ->
+            runOnUiThread {
+                visionView.visibility = if (status.running) View.VISIBLE else View.GONE
+                service?.session?.onVisionStatus(status.running, status.peopleVisible, status.fps, status.detector, status.error)
+            }
+        }
+
         ReceiverService.start(this)
         bindService(Intent(this, ReceiverService::class.java), connection, Context.BIND_AUTO_CREATE)
     }
@@ -88,7 +106,17 @@ class ReceiverActivity : Activity() {
         super.onStop()
     }
 
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != CAMERA_PERMISSION_REQUEST) return
+        val granted = grantResults.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED
+        ReceiverLog.i(TAG, "camera_permission", "granted" to granted)
+        if (granted && visionWanted) vision?.start()
+        else service?.session?.onVisionStatus(false, 0, 0f, "", if (granted) null else "camera permission denied")
+    }
+
     override fun onDestroy() {
+        vision?.release()
         service?.onExit = null
         runCatching { unbindService(connection) }
         decoder?.stop()
@@ -143,6 +171,25 @@ class ReceiverActivity : Activity() {
             override val sourceHeight: Int get() = renderer.sourceHeight
             override val displayWidth: Int get() = renderer.displayWidth
             override val displayHeight: Int get() = renderer.displayHeight
+        }
+
+        override val vision = object : SessionVision {
+            override val available: Boolean get() = this@ReceiverActivity.vision != null
+            override val running: Boolean get() = this@ReceiverActivity.vision?.isRunning ?: false
+
+            override fun setEnabled(enabled: Boolean) = runOnUiThread {
+                visionWanted = enabled
+                val controller = this@ReceiverActivity.vision ?: return@runOnUiThread
+                if (!enabled) { controller.stop(); return@runOnUiThread }
+                if (!controller.hasPermission()) {
+                    // The user grants this; the app never presumes to open a camera silently.
+                    requestPermissions(arrayOf(android.Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST)
+                    return@runOnUiThread
+                }
+                controller.start()
+            }
+
+            override fun setGain(gain: Float) { this@ReceiverActivity.vision?.gain = gain.coerceIn(0.5f, 4f) }
         }
 
         override val decoder = object : SessionDecoder {

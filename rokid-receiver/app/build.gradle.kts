@@ -38,6 +38,7 @@ dependencies {
     implementation(project(":renderer"))
     implementation(project(":control"))
     implementation(project(":telemetry"))
+    implementation(project(":camera"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)

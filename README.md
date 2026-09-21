@@ -92,7 +92,12 @@ From community and vendor documentation (details and sources in `docs/rokid-sdk-
    driven by the Mouse pad. Because that content belongs to the sender, its input needs no
    accessibility service. If the platform declines the window too, the app offers "Display over
    other apps" as a second route.
-8. On the glasses, **double tap the temple** to exit, as in other Rokid apps. A single tap shows
+8. **Glasses camera view** shows the glasses' own camera on the panel with the contrast lifted
+   and four corners around each person facing you. Toggle it from the phone, or swipe forward on
+   the temple when nothing is mirroring. It runs entirely on the glasses: nothing is recorded,
+   nothing is transmitted, nobody is identified, and the device's camera indicator is left
+   exactly as the platform drives it. See `docs/security.md`.
+9. On the glasses, **double tap the temple** to exit, as in other Rokid apps. A single tap shows
    or hides the heads-up text, which hides itself a few seconds after the picture starts. Swipes
    step the zoom and a long press recenters. Warnings and the pairing code are never hidden, and
    if the picture stalls the glasses name the stage that stopped instead of showing black. A single tap toggles

@@ -184,6 +184,13 @@ object Payloads {
     data class Goodbye(val reason: String = "")
 
     /**
+     * Vision mode on the glasses: enhance the camera picture for the panel and bracket the
+     * people in it. Nothing is captured or sent anywhere; this only switches the mode on.
+     */
+    @Serializable
+    data class Vision(val enabled: Boolean, val contrast: Float = 1.4f)
+
+    /**
      * Remote pointer (mouse mode). Coordinates are normalized to the captured source frame, so
      * the receiver can place the cursor whatever the current zoom or pan is. Sent by the phone
      * only while mouse mode is on; `visible = false` removes the cursor.

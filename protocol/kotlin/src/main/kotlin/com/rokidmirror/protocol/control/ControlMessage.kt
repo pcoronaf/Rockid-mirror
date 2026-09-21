@@ -17,6 +17,9 @@ enum class MessageType {
     /** Remote pointer position and button state for mouse mode. */
     POINTER,
 
+    /** Turns the glasses' camera vision mode on or off and sets its contrast. */
+    VISION_SET,
+
     /**
      * A type this build does not know. Messages added by a newer peer decode to this and are
      * ignored instead of failing the session, so new message types stay backward compatible.

@@ -38,6 +38,28 @@ This is a deliberate departure from the v0.1 non-goal "remote touch injection in
 Android apps", made at the product owner's request, and it is opt-in twice over: the user enables
 the service, then switches the pad to Mouse.
 
+## Camera vision mode
+
+Vision mode shows the glasses' own camera on the panel with the contrast lifted, and marks each
+person facing the wearer with corner brackets.
+
+* **The capture indicator is untouched.** The camera is opened through the ordinary Android API
+  and nothing in this project reads, writes or suppresses the device's recording indicator.
+  Whatever the glasses normally show while the camera is live, they show here.
+* **Nothing is recorded.** Frames are read, used to draw the current picture and dropped. No
+  frame is written to storage, and none is sent over the network or to the phone.
+* **Nobody is identified.** The detector reports where a face is, never whose it is. No face
+  data is stored, compared or accumulated, and face recognition is deliberately not implemented.
+* **The model runs on the glasses.** The detector's model is bundled in the APK, so it needs no
+  network and no Google Play services.
+* **The user grants the camera.** The app requests the runtime permission when the mode is first
+  turned on and never opens the camera otherwise.
+* Vision mode and mirroring are mutually exclusive, so the panel is never showing the wearer's
+  camera and a mirrored screen at the same time.
+
+Recording and filming laws differ by country and by place. Wearing camera glasses that mark
+people is lawful in many settings and not in others; that judgement sits with the wearer.
+
 ## Extended screen
 
 Extended-screen mode creates a virtual display with `VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY`, so

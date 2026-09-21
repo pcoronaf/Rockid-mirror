@@ -15,6 +15,7 @@ Versions are pinned in `gradle/libs.versions.toml`.
 | AndroidX DataStore preferences | 1.1.7 | Apache-2.0 | Profile / preset persistence | sender |
 | Jetpack Compose BOM (ui, material3, tooling) | 2025.05.01 | Apache-2.0 | Phone UI | sender |
 | JUnit | 4.13.2 | EPL-1.0 | Unit tests | all |
+| ML Kit face detection (bundled) | 16.1.7 | Apache-2.0 | On-device person detection for the glasses' vision mode; model ships in the APK, so no network and no Play services | rokid-receiver/camera |
 | JmDNS | 3.5.9 | Apache-2.0 | mDNS advertising for the desktop mock receiver only | tools/mock-receiver |
 | Gradle | 8.14.3 | Apache-2.0 | Build tool (wrapper committed) | all |
 

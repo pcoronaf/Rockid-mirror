@@ -66,6 +66,14 @@ interface SessionTransport {
     val rttNs: Long
 }
 
+/** Vision mode, owned by the window because it needs a camera and somewhere to draw. */
+interface SessionVision {
+    val available: Boolean
+    val running: Boolean
+    fun setEnabled(enabled: Boolean)
+    fun setGain(gain: Float)
+}
+
 interface SessionOverlay {
     /** Status, info and hint text; warnings and the pairing code are never hidden. */
     var chromeVisible: Boolean
@@ -89,6 +97,7 @@ class ReceiverSession(
     private val platforms: StateFlow<RokidPlatformAdapter?>,
     private val surface: SessionSurface,
     private val decoder: SessionDecoder,
+    private val vision: SessionVision,
     private val transport: SessionTransport,
     private val overlay: SessionOverlay,
     private val stats: PipelineStats,
@@ -191,6 +200,8 @@ class ReceiverSession(
     fun onControlMessage(m: ControlMessage) {
         when (m.type) {
             MessageType.STREAM_START -> {
+                // A stream and the camera view cannot share the panel.
+                if (vision.running) vision.setEnabled(false)
                 val s = ControlCodec.payloadOf(m, Payloads.StreamStart.serializer())
                 sourceName = s.sourceName
                 framesSubmitted = 0; framesDroppedByDecoder = 0
@@ -210,6 +221,11 @@ class ReceiverSession(
                 baseViewport = ViewportState(v.scale, v.centerX, v.centerY, FitMode.fromWire(v.fitMode))
                 head.setBase(baseViewport)
                 surface.setViewport(baseViewport)
+            }
+            MessageType.VISION_SET -> {
+                val v = ControlCodec.payloadOf(m, Payloads.Vision.serializer())
+                vision.setGain(v.contrast)
+                setVision(v.enabled, "phone")
             }
             MessageType.POINTER -> {
                 val p = ControlCodec.payloadOf(m, Payloads.Pointer.serializer())
@@ -356,8 +372,9 @@ class ReceiverSession(
             // heads-up text out of the way, which is what it is mostly in the way of.
             GlassesInput.Select -> if (overlay.chromeVisible) hideChrome() else showChrome(sticky = true)
             GlassesInput.DoubleTap -> { overlay.setHint("Closing…"); onExitRequested() }
-            GlassesInput.Forward -> { showChrome(); stepZoom(1.25f) }
-            GlassesInput.Backward -> { showChrome(); stepZoom(0.8f) }
+            // With no picture to zoom, the swipes are the way into and out of vision mode.
+            GlassesInput.Forward -> if (state == State.STREAMING) { showChrome(); stepZoom(1.25f) } else setVision(true, "temple")
+            GlassesInput.Backward -> if (state == State.STREAMING) { showChrome(); stepZoom(0.8f) } else setVision(false, "temple")
             GlassesInput.LongPress -> when (state) {
                 // Recentring means nothing with no picture, so idle long press is "forget all senders".
                 State.ADVERTISING, State.RECONNECT_WAIT -> {
@@ -376,6 +393,44 @@ class ReceiverSession(
             // is why every other Rokid app closes on it; consuming it kept us open.
             GlassesInput.Back -> { overlay.setHint("Closing…"); onExitRequested() }
             is GlassesInput.Unknown -> overlay.setHint("Key ${input.keyCode}")
+        }
+    }
+
+    /**
+     * Vision mode takes the display, so it is mutually exclusive with a stream. Nothing about
+     * the camera indicator is touched here; the platform drives it as it always does.
+     */
+    fun setVision(enabled: Boolean, source: String) {
+        if (enabled && state == State.STREAMING) {
+            overlay.setWarning("Stop mirroring first: the glasses can show one or the other")
+            return
+        }
+        if (!enabled) {
+            vision.setEnabled(false)
+            overlay.setHint(null)
+            return
+        }
+        if (!vision.available) {
+            showChrome(sticky = true)
+            overlay.setWarning("Camera not available: grant the permission in the glasses' settings")
+            return
+        }
+        surface.hideVideo()
+        vision.setEnabled(true)
+        showChrome()
+        ReceiverLog.i(TAG, "vision_mode", "enabled" to true, "source" to source)
+    }
+
+    /** Progress from the camera pipeline, shown briefly so it does not sit on top of the view. */
+    fun onVisionStatus(running: Boolean, people: Int, fps: Float, detector: String, error: String?) {
+        when {
+            error != null -> { showChrome(sticky = true); overlay.setWarning("Vision: $error") }
+            !running -> overlay.setHint(null)
+            else -> {
+                overlay.setWarning(null)
+                overlay.setStatus(if (people == 0) "Vision · no one in view" else "Vision · $people in view")
+                overlay.setDebug("camera %.0f fps · %s".format(fps, detector))
+            }
         }
     }
 
@@ -433,7 +488,7 @@ class ReceiverSession(
         // Text is useful while connecting and in the way once the picture is up.
         if (next == State.STREAMING) showChrome() else { chromeJob?.cancel(); overlay.chromeVisible = true }
         if (next != State.STREAMING) overlay.setDebug(null)
-        if (next == State.ADVERTISING) overlay.setHint("Open Rokid Mirror on the phone · double tap the temple to exit · long press forgets phones")
+        if (next == State.ADVERTISING) overlay.setHint("Open Rokid Mirror on the phone · swipe forward for camera view · double tap to exit")
         if (next == State.CONNECTED || next == State.STREAMING) overlay.setHint(null)
     }
 
