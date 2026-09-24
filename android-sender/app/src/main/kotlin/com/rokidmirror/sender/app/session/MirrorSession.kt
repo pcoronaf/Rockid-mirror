@@ -495,14 +495,25 @@ class MirrorSession(private val context: Context, private val container: AppCont
             }
             is TransportEvent.KeyframeRequested -> encoder.requestKeyFrame()
             is TransportEvent.StatsReceived -> {}
+            is TransportEvent.PreviewReceived -> onPreviewFrame(e.frame)
             is TransportEvent.ReceiverError -> { event("Receiver error ${e.code}: ${e.message}"); if (!e.code.recoverable) dispatch(SenderEvent.Failed(e.code, e.message)) }
             is TransportEvent.CredentialIssued -> { container.credentialStore.save(e.credential); event("Paired with ${e.credential.receiverId}") }
             is TransportEvent.Disconnected -> onLinkLost(e.code, e.details)
         }
     }
 
+    private fun onPreviewFrame(frame: Payloads.PreviewFrame) {
+        if (!_previewEnabled.value) return
+        val decoded = runCatching {
+            val bytes = android.util.Base64.decode(frame.data, android.util.Base64.NO_WRAP)
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        }.getOrNull() ?: return
+        _previewFrame.value = GlassesPreview(decoded, frame.kind, System.nanoTime())
+    }
+
     private fun onLinkLost(code: ErrorCode, details: String?) {
         if (userDisconnect) return
+        _previewFrame.value = null
         if (reconnectJob?.isActive == true) return // attempts inside the reconnect loop report through exceptions
         val ep = endpoint ?: return
         val recoverable = code == ErrorCode.NETWORK_LOST || code == ErrorCode.RECEIVER_NOT_FOUND
@@ -654,6 +665,45 @@ class MirrorSession(private val context: Context, private val container: AppCont
     }
 
     fun requestKeyframe() = encoder.requestKeyFrame()
+
+    // ---- seeing what the glasses see ---------------------------------------------------
+
+    private val _previewEnabled = MutableStateFlow(false)
+    val previewEnabled: StateFlow<Boolean> = _previewEnabled.asStateFlow()
+    private val _previewFrame = MutableStateFlow<GlassesPreview?>(null)
+    /** Latest snapshot from the glasses, or null when none has arrived. */
+    val previewFrame: StateFlow<GlassesPreview?> = _previewFrame.asStateFlow()
+
+    /**
+     * Asks the glasses for snapshots of their display. Off by default: it costs a little
+     * bandwidth on the same link that carries the video.
+     */
+    fun setPreviewEnabled(enabled: Boolean) {
+        _previewEnabled.value = enabled
+        if (!enabled) _previewFrame.value = null
+        scope.launch {
+            if (transport.state.value !is TransportState.Connected) return@launch
+            runCatching {
+                transport.send(MessageType.PREVIEW_SET, Payloads.PreviewSet.serializer(), Payloads.PreviewSet(enabled))
+            }
+        }
+    }
+
+    /**
+     * What part of the phone screen the glasses are actually showing. Exact, computed from the
+     * viewport the phone already owns, so it needs nothing sent back.
+     */
+    fun visibleRegionOnGlasses(): com.rokidmirror.protocol.viewport.SourceRegion {
+        val info = _info.value
+        val display = info.capabilities?.display
+        return com.rokidmirror.protocol.viewport.ViewportMath.visibleSourceRegion(
+            viewport.state.value,
+            info.sourceWidth.takeIf { it > 0 } ?: viewport.sourceWidth,
+            info.sourceHeight.takeIf { it > 0 } ?: viewport.sourceHeight,
+            display?.width ?: 480,
+            display?.height ?: 640,
+        )
+    }
 
     // ---- glasses camera view -------------------------------------------------------------
 

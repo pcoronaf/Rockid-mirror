@@ -21,5 +21,8 @@ All fields added after v1 must be optional with defaults. Binary fields are base
 | ERROR | both | code (ErrorCode name), message, recoverable |
 | GOODBYE | both | reason |
 | POINTER | S→R | x, y (normalized to the captured source frame), visible, pressed |
+| VISION_SET | S→R | enabled, contrast |
+| PREVIEW_SET | S→R | enabled, fps, maxWidth, quality |
+| PREVIEW_FRAME | R→S | data (base64 JPEG), width, height, kind (CAMERA/OVERLAY/WORKSPACE), capturedNs |
 
 An unrecognised `type` decodes to `UNKNOWN` and is ignored rather than failing the session.

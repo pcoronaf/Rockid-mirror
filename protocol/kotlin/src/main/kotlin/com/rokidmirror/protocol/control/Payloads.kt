@@ -190,6 +190,33 @@ object Payloads {
     @Serializable
     data class Vision(val enabled: Boolean, val contrast: Float = 1.4f)
 
+    /** Phone -> receiver: start or stop sending snapshots of the glasses' display. */
+    @Serializable
+    data class PreviewSet(
+        val enabled: Boolean,
+        val fps: Int = 3,
+        val maxWidth: Int = 320,
+        val quality: Int = 55,
+    )
+
+    /** What the snapshot shows, so the phone can label it honestly. */
+    enum class PreviewKind { CAMERA, OVERLAY, WORKSPACE }
+
+    /**
+     * Receiver -> phone: one small JPEG of the glasses' display, base64 encoded.
+     *
+     * A decoded video frame cannot be read back from the decoder's own surface, so a mirroring
+     * session reports OVERLAY and the phone draws the visible region from the viewport instead.
+     */
+    @Serializable
+    data class PreviewFrame(
+        val data: String,
+        val width: Int,
+        val height: Int,
+        val kind: String = PreviewKind.OVERLAY.name,
+        val capturedNs: Long = 0,
+    )
+
     /**
      * Remote pointer (mouse mode). Coordinates are normalized to the captured source frame, so
      * the receiver can place the cursor whatever the current zoom or pan is. Sent by the phone

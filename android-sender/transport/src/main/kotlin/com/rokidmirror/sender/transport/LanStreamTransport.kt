@@ -244,6 +244,9 @@ class LanStreamTransport(
                 _statistics.value = _statistics.value.copy(receiverStats = s, lossFraction = if (s.packetsReceived + s.packetsLost > 0) s.packetsLost.toFloat() / (s.packetsReceived + s.packetsLost) else 0f)
                 _events.tryEmit(TransportEvent.StatsReceived(s))
             }
+            MessageType.PREVIEW_FRAME -> {
+                _events.tryEmit(TransportEvent.PreviewReceived(ControlCodec.payloadOf(msg, Payloads.PreviewFrame.serializer())))
+            }
             MessageType.ERROR -> {
                 val e = ControlCodec.payloadOf(msg, Payloads.Error.serializer())
                 _events.tryEmit(TransportEvent.ReceiverError(ErrorCode.fromWire(e.code), e.message))

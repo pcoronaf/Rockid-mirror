@@ -4,6 +4,7 @@ import com.rokidmirror.protocol.viewport.FitMode
 import com.rokidmirror.protocol.viewport.ViewportMath
 import com.rokidmirror.protocol.viewport.ViewportState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ViewportMathTest {
@@ -71,5 +72,53 @@ class ViewportMathTest {
     fun sourceChangeRecenters() {
         val s = ViewportMath.onSourceChanged(ViewportState(2f, 0.1f, 0.2f, FitMode.CUSTOM))
         assertEquals(0.5f, s.centerX, 0f); assertEquals(0.5f, s.centerY, 0f); assertEquals(FitMode.CUSTOM, s.fitMode)
+    }
+}
+
+/** The phone draws a map of the wearer's view from this, so the numbers have to be right. */
+class VisibleSourceRegionTest {
+    private val sw = 720; private val sh = 1600; private val dw = 480; private val dh = 640
+
+    @Test
+    fun fitShowsTheWholeFrame() {
+        val r = ViewportMath.visibleSourceRegion(ViewportState(fitMode = FitMode.FIT), sw, sh, dw, dh)
+        assertEquals(0f, r.left, 1e-4f)
+        assertEquals(1f, r.right, 1e-4f)
+        assertEquals(1f, r.height, 1e-4f)
+    }
+
+    @Test
+    fun actualSizeShowsOnlyAWindowOntoTheFrame() {
+        val r = ViewportMath.visibleSourceRegion(ViewportState(fitMode = FitMode.ACTUAL), sw, sh, dw, dh)
+        assertEquals(480f / 720f, r.width, 1e-4f)
+        assertEquals(640f / 1600f, r.height, 1e-4f)
+        assertEquals(0.5f, (r.left + r.right) / 2f, 1e-4f)
+    }
+
+    @Test
+    fun panningMovesTheWindowAndItNeverLeavesTheFrame() {
+        var state = ViewportState(fitMode = FitMode.ACTUAL)
+        state = ViewportMath.pan(state, -5f, -5f, sw, sh, dw, dh)
+        val topLeft = ViewportMath.visibleSourceRegion(state, sw, sh, dw, dh)
+        assertEquals(0f, topLeft.left, 1e-4f)
+        assertEquals(0f, topLeft.top, 1e-4f)
+        state = ViewportMath.pan(state, 5f, 5f, sw, sh, dw, dh)
+        val bottomRight = ViewportMath.visibleSourceRegion(state, sw, sh, dw, dh)
+        assertEquals(1f, bottomRight.right, 1e-4f)
+        assertEquals(1f, bottomRight.bottom, 1e-4f)
+    }
+
+    @Test
+    fun zoomingInShrinksTheVisibleRegion() {
+        val wide = ViewportMath.visibleSourceRegion(ViewportState(fitMode = FitMode.FIT), sw, sh, dw, dh)
+        val close = ViewportMath.visibleSourceRegion(ViewportState(4f, 0.5f, 0.5f, FitMode.CUSTOM), sw, sh, dw, dh)
+        assertTrue(close.width < wide.width)
+        assertTrue(close.height < wide.height)
+    }
+
+    @Test
+    fun degenerateGeometryIsTheWholeFrame() {
+        val r = ViewportMath.visibleSourceRegion(ViewportState(), 0, 0, dw, dh)
+        assertEquals(0f, r.left, 0f); assertEquals(1f, r.right, 0f)
     }
 }

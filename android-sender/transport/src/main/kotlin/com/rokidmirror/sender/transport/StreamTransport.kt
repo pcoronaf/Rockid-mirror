@@ -35,6 +35,8 @@ sealed class TransportEvent {
     data class CapabilitiesReceived(val capabilities: Payloads.Capabilities) : TransportEvent()
     data class KeyframeRequested(val reason: String) : TransportEvent()
     data class StatsReceived(val stats: Payloads.Stats) : TransportEvent()
+    /** A snapshot of what the glasses are showing. */
+    data class PreviewReceived(val frame: Payloads.PreviewFrame) : TransportEvent()
     data class ReceiverError(val code: ErrorCode, val message: String) : TransportEvent()
     data class Disconnected(val code: ErrorCode, val details: String?) : TransportEvent()
     /** A new credential was issued during pairing; persist it. */

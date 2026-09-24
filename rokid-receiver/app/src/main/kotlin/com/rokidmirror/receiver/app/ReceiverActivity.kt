@@ -56,12 +56,15 @@ class ReceiverActivity : Activity() {
     private lateinit var visionView: VisionView
     private var vision: VisionController? = null
     private var visionWanted = false
+    private lateinit var rootView: FrameLayout
+    private var previewBitmap: android.graphics.Bitmap? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         platform = AndroidPlatformAdapter(this)
         val display = runCatching { platform.getDisplayInfo() }.getOrElse { DisplayInfo(480, 640, 240, 60f) }
         val root = FrameLayout(this).apply { setBackgroundColor(android.graphics.Color.BLACK) }
+        rootView = root
         val host = FrameLayout(this).apply { clipChildren = true }
         renderer = ViewportRenderer(host, platform.createRenderTarget(), display)
         overlay = OverlayView(this).apply { debugEnabled = BuildConfig.DEBUG }
@@ -190,6 +193,34 @@ class ReceiverActivity : Activity() {
             }
 
             override fun setGain(gain: Float) { this@ReceiverActivity.vision?.gain = gain.coerceIn(0.5f, 4f) }
+        }
+
+        /**
+         * The SurfaceView's video does not appear in a view canvas, so a mirroring session
+         * yields the overlay only and says so; the camera view and the overlay draw normally.
+         */
+        override fun drawPreview(maxWidth: Int): PreviewSnapshot? {
+            val width = rootView.width
+            val height = rootView.height
+            if (width <= 0 || height <= 0) return null
+            val (targetWidth, targetHeight) = com.rokidmirror.receiver.renderer.PreviewScaling.scaledSize(width, height, maxWidth)
+            val existing = previewBitmap
+            val bitmap = if (existing != null && existing.width == targetWidth && existing.height == targetHeight && !existing.isRecycled) {
+                existing
+            } else {
+                existing?.recycle()
+                android.graphics.Bitmap.createBitmap(targetWidth, targetHeight, android.graphics.Bitmap.Config.ARGB_8888).also { previewBitmap = it }
+            }
+            val canvas = android.graphics.Canvas(bitmap)
+            canvas.drawColor(android.graphics.Color.BLACK)
+            canvas.scale(targetWidth.toFloat() / width, targetHeight.toFloat() / height)
+            rootView.draw(canvas)
+            val kind = if (this@ReceiverActivity.vision?.isRunning == true) {
+                com.rokidmirror.protocol.control.Payloads.PreviewKind.CAMERA
+            } else {
+                com.rokidmirror.protocol.control.Payloads.PreviewKind.OVERLAY
+            }
+            return PreviewSnapshot(bitmap, kind.name)
         }
 
         override val decoder = object : SessionDecoder {

@@ -23,6 +23,7 @@ import com.rokidmirror.receiver.R
 import com.rokidmirror.receiver.control.ReceiverSession
 import com.rokidmirror.receiver.control.SessionDecoder
 import com.rokidmirror.receiver.control.SessionOverlay
+import com.rokidmirror.receiver.control.SessionPreview
 import com.rokidmirror.receiver.control.SessionSurface
 import com.rokidmirror.receiver.control.SessionVision
 import com.rokidmirror.receiver.control.SessionTransport
@@ -42,12 +43,23 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 /** Everything the Activity contributes while it has a window: pixels, input and the decoder. */
+/** One snapshot of the glasses' display, plus what it actually shows. */
+class PreviewSnapshot(val bitmap: android.graphics.Bitmap, val kind: String)
+
 interface DisplayTarget {
     val surface: SessionSurface
     val decoder: SessionDecoder
     val vision: SessionVision
+    /**
+     * Draws what the wearer sees into a bitmap. Must run on the main thread. Returns null when
+     * there is nothing to show. A decoded video frame cannot be read back from the decoder's
+     * surface, so during mirroring this carries the overlay and the phone draws the rest.
+     */
+    fun drawPreview(maxWidth: Int): PreviewSnapshot?
     val overlay: SessionOverlay
     val platform: RokidPlatformAdapter
 }
@@ -121,7 +133,8 @@ class ReceiverService : Service() {
         transport = ReceiverTransport(app.identity, app.credentials, { capabilities }, transportListener)
         session = ReceiverSession(
             platforms = platforms,
-            surface = surfaceBridge, decoder = decoderBridge, vision = visionBridge, transport = transportBridge, overlay = overlayBridge,
+            surface = surfaceBridge, decoder = decoderBridge, vision = visionBridge, preview = previewBridge,
+            transport = transportBridge, overlay = overlayBridge,
             stats = stats, scope = scope, debugOverlay = BuildConfig.DEBUG,
             onForgetAllSenders = { app.credentials.forgetAll() },
             onExitRequested = { stopEverything() },
@@ -162,6 +175,7 @@ class ReceiverService : Service() {
 
     fun detach(displayTarget: DisplayTarget) {
         if (target !== displayTarget) return
+        previewJob?.cancel()
         runCatching { displayTarget.vision.setEnabled(false) }
         target = null
         platforms.value = null
@@ -264,6 +278,44 @@ class ReceiverService : Service() {
             target?.vision?.setEnabled(enabled)
         }
         override fun setGain(gain: Float) { target?.vision?.setGain(gain) }
+    }
+
+    private var previewJob: kotlinx.coroutines.Job? = null
+
+    private val previewBridge = object : SessionPreview {
+        override fun setEnabled(enabled: Boolean, fps: Int, maxWidth: Int, quality: Int) {
+            previewJob?.cancel()
+            if (!enabled) return
+            previewJob = scope.launch { previewLoop(fps, maxWidth, quality) }
+        }
+    }
+
+    /**
+     * Snapshots are drawn on the main thread and compressed off it, at a few frames a second:
+     * enough for the phone to see what the wearer sees without competing with the video stream.
+     */
+    private suspend fun previewLoop(fps: Int, maxWidth: Int, quality: Int) {
+        val interval = com.rokidmirror.receiver.renderer.PreviewScaling.intervalMs(fps)
+        while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+            val snapshot = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                runCatching { target?.drawPreview(maxWidth) }.getOrNull()
+            }
+            if (snapshot != null) {
+                val encoded = runCatching {
+                    val stream = java.io.ByteArrayOutputStream()
+                    snapshot.bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality.coerceIn(20, 90), stream)
+                    android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
+                }.getOrNull()
+                if (encoded != null) {
+                    transport.send(
+                        com.rokidmirror.protocol.control.MessageType.PREVIEW_FRAME,
+                        Payloads.PreviewFrame.serializer(),
+                        Payloads.PreviewFrame(encoded, snapshot.bitmap.width, snapshot.bitmap.height, snapshot.kind, System.nanoTime()),
+                    )
+                }
+            }
+            kotlinx.coroutines.delay(interval)
+        }
     }
 
     private val transportBridge = object : SessionTransport {

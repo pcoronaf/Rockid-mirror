@@ -106,10 +106,20 @@ fun HomeScreen(
             Button(onClick = { onRequestCapture(CaptureMode.WHOLE_DISPLAY) }, enabled = state is SenderState.Ready, modifier = Modifier.weight(1f)) { Text("Mirror phone") }
             Button(onClick = { onRequestCapture(CaptureMode.USER_CHOICE) }, enabled = state is SenderState.Ready, modifier = Modifier.weight(1f)) { Text("Select app") }
         }
+        var showGlassesView by remember { mutableStateOf(false) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = { showGlassesView = true; session.setPreviewEnabled(true) },
+                enabled = connected,
+                modifier = Modifier.weight(1f),
+            ) { Text("Glasses view") }
             OutlinedButton(onClick = onStartExtended, enabled = state is SenderState.Ready, modifier = Modifier.weight(1f)) { Text("Extended screen") }
             if (connected) OutlinedButton(onClick = session::disconnect, modifier = Modifier.weight(1f)) { Text("Disconnect") }
         }
+        if (showGlassesView) {
+            GlassesViewDialog(session) { showGlassesView = false; session.setPreviewEnabled(false) }
+        }
+
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { onStartSynthetic(SyntheticPattern.TEST_PATTERN) }, enabled = state is SenderState.Ready, modifier = Modifier.weight(1f)) { Text("Test pattern") }
             OutlinedButton(onClick = { onStartSynthetic(SyntheticPattern.MATRIX_RAIN) }, enabled = state is SenderState.Ready, modifier = Modifier.weight(1f)) { Text("Matrix rain") }

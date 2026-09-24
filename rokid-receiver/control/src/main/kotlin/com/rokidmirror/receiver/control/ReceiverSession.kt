@@ -74,6 +74,11 @@ interface SessionVision {
     fun setGain(gain: Float)
 }
 
+/** Sends snapshots of the glasses' display back to the phone; owned by the service. */
+interface SessionPreview {
+    fun setEnabled(enabled: Boolean, fps: Int, maxWidth: Int, quality: Int)
+}
+
 interface SessionOverlay {
     /** Status, info and hint text; warnings and the pairing code are never hidden. */
     var chromeVisible: Boolean
@@ -98,6 +103,7 @@ class ReceiverSession(
     private val surface: SessionSurface,
     private val decoder: SessionDecoder,
     private val vision: SessionVision,
+    private val preview: SessionPreview,
     private val transport: SessionTransport,
     private val overlay: SessionOverlay,
     private val stats: PipelineStats,
@@ -184,6 +190,7 @@ class ReceiverSession(
     }
 
     fun onDisconnected(reason: String) {
+        preview.setEnabled(false, 0, 0, 0)
         decoder.stop()
         surface.hideVideo()
         overlay.setPointer(null, null, false)
@@ -221,6 +228,11 @@ class ReceiverSession(
                 baseViewport = ViewportState(v.scale, v.centerX, v.centerY, FitMode.fromWire(v.fitMode))
                 head.setBase(baseViewport)
                 surface.setViewport(baseViewport)
+            }
+            MessageType.PREVIEW_SET -> {
+                val p = ControlCodec.payloadOf(m, Payloads.PreviewSet.serializer())
+                preview.setEnabled(p.enabled, p.fps, p.maxWidth, p.quality)
+                ReceiverLog.i(TAG, "preview", "enabled" to p.enabled, "fps" to p.fps, "maxWidth" to p.maxWidth)
             }
             MessageType.VISION_SET -> {
                 val v = ControlCodec.payloadOf(m, Payloads.Vision.serializer())

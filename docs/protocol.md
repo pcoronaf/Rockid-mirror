@@ -49,6 +49,9 @@ S → R  STREAM_FORMAT  codec, w, h, fps, csd0/csd1 (base64 SPS/PPS), sourceW/H,
 S → R  VIEWPORT_SET / PROFILE_SET                                             (throttled to 25 Hz)
 S → R  POINTER        {x, y, visible, pressed}  mouse-mode cursor in normalized source coords,
                       throttled to 25 Hz; the receiver draws it in its overlay
+S → R  VISION_SET    {enabled, contrast}  camera view on the glasses
+S → R  PREVIEW_SET   {enabled, fps, maxWidth, quality}  ask for snapshots of the glasses' display
+R → S  PREVIEW_FRAME {data (base64 JPEG), width, height, kind, capturedNs}  a few per second while asked
 both   PING {sentNs} / PONG {sentNs, receiverNs}  every 1 s → RTT + clock offset (ClockSync)
 R → S  STATS          every 1 s (see payloads.md)
 R → S  KEYFRAME_REQUEST after loss / decoder drop / reconfigure (rate-limited 300 ms)
