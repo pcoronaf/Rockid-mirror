@@ -320,7 +320,13 @@ class LanStreamTransport(
     /** Caller must hold [writeMutex]. */
     private suspend fun writeLocked(bytes: ByteArray) {
         val out = output ?: throw MirrorException(ErrorCode.NETWORK_LOST, "not connected")
-        try { runInterruptible { Framing.write(out, bytes) } } catch (e: java.io.IOException) { throw MirrorException(ErrorCode.NETWORK_LOST, e.message, e) }
+        try {
+            runInterruptible { Framing.write(out, bytes) }
+        } catch (e: Framing.FrameTooLarge) {
+            MirrorLog.w(TAG, "message_dropped_too_large", "bytes" to e.size)
+        } catch (e: java.io.IOException) {
+            throw MirrorException(ErrorCode.NETWORK_LOST, e.message, e)
+        }
     }
 
     override suspend fun close(reason: String) {

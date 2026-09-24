@@ -301,11 +301,7 @@ class ReceiverService : Service() {
                 runCatching { target?.drawPreview(maxWidth) }.getOrNull()
             }
             if (snapshot != null) {
-                val encoded = runCatching {
-                    val stream = java.io.ByteArrayOutputStream()
-                    snapshot.bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality.coerceIn(20, 90), stream)
-                    android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
-                }.getOrNull()
+                val encoded = encodeWithinBudget(snapshot.bitmap, quality, maxWidth)
                 if (encoded != null) {
                     transport.send(
                         com.rokidmirror.protocol.control.MessageType.PREVIEW_FRAME,
@@ -316,6 +312,29 @@ class ReceiverService : Service() {
             }
             kotlinx.coroutines.delay(interval)
         }
+    }
+
+    /**
+     * Encodes a snapshot small enough to send, trying lower quality and then a smaller picture.
+     * A snapshot that cannot fit is skipped: it would exceed the control frame limit, and the
+     * first version of this cost the link every time it tried.
+     */
+    private fun encodeWithinBudget(bitmap: android.graphics.Bitmap, quality: Int, maxWidth: Int): String? {
+        for ((attemptQuality, attemptWidth) in com.rokidmirror.receiver.renderer.PreviewScaling.attempts(quality, maxWidth)) {
+            val source = if (attemptWidth >= bitmap.width) bitmap else runCatching {
+                val (w, h) = com.rokidmirror.receiver.renderer.PreviewScaling.scaledSize(bitmap.width, bitmap.height, attemptWidth)
+                android.graphics.Bitmap.createScaledBitmap(bitmap, w, h, true)
+            }.getOrNull() ?: continue
+            val encoded = runCatching {
+                val stream = java.io.ByteArrayOutputStream()
+                source.compress(android.graphics.Bitmap.CompressFormat.JPEG, attemptQuality, stream)
+                android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
+            }.getOrNull()
+            if (source !== bitmap) source.recycle()
+            if (encoded != null && encoded.length <= Protocol.MAX_PREVIEW_PAYLOAD_BYTES) return encoded
+        }
+        ReceiverLog.w(TAG, "preview_skipped_too_large")
+        return null
     }
 
     private val transportBridge = object : SessionTransport {

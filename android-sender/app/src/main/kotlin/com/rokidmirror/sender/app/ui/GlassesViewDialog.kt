@@ -11,10 +11,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -23,6 +26,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -37,13 +41,22 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.DialogProperties
 import com.rokidmirror.sender.app.session.MirrorSession
 import com.rokidmirror.sender.control.SenderState
+import android.graphics.SurfaceTexture
+import android.view.Surface
+import android.view.TextureView
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * What the wearer is seeing, full screen on the phone and zoomable.
@@ -62,6 +75,9 @@ fun GlassesViewDialog(session: MirrorSession, onDismiss: () -> Unit) {
     val viewport by session.viewport.state.collectAsState()
     val mirroring = state is SenderState.Streaming || state is SenderState.Paused
 
+    // Mirroring cannot be photographed by the glasses, so the phone decodes its own stream and
+    // frames it exactly as the glasses do. The map stays available for seeing where you are.
+    var showMap by remember { mutableStateOf(false) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     var frameSize by remember { mutableStateOf(IntSize.Zero) }
@@ -123,6 +139,9 @@ fun GlassesViewDialog(session: MirrorSession, onDismiss: () -> Unit) {
                                 .fillMaxWidth()
                                 .aspectRatio(displayWidth.toFloat() / displayHeight),
                         )
+                        mirroring && !showMap -> Box(
+                            zoomed.fillMaxWidth().aspectRatio(displayWidth.toFloat() / displayHeight),
+                        ) { MirroredPicture(session, displayWidth, displayHeight) }
                         mirroring -> Box(
                             zoomed.fillMaxWidth().aspectRatio(displayWidth.toFloat() / displayHeight),
                         ) { ViewportMap(session) }
@@ -132,6 +151,13 @@ fun GlassesViewDialog(session: MirrorSession, onDismiss: () -> Unit) {
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.Center,
                         )
+                    }
+                }
+
+                if (mirroring) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = !showMap, onClick = { showMap = false }, label = { Text("Picture") })
+                        FilterChip(selected = showMap, onClick = { showMap = true }, label = { Text("Map") })
                     }
                 }
 
@@ -147,8 +173,9 @@ fun GlassesViewDialog(session: MirrorSession, onDismiss: () -> Unit) {
                 Text(
                     when {
                         showingCamera -> "Live camera view from the glasses. Pinch or use + to zoom, drag to move, double tap to reset."
-                        mirroring -> "The bright area is the part of your screen that is on the glasses. The mirrored picture " +
-                            "cannot be read back from the decoder, so this is a map of it, not a copy."
+                        mirroring && !showMap -> "The mirrored picture, framed exactly as the glasses frame it. " +
+                            "Decoded here on the phone, because a decoded frame cannot be read back out of the glasses."
+                        mirroring -> "The bright area is the part of your screen that is on the glasses."
                         snapshot != null -> "The glasses' overlay. Nothing is being mirrored."
                         else -> "Connect and the glasses will start sending snapshots."
                     },
@@ -167,6 +194,58 @@ fun GlassesViewDialog(session: MirrorSession, onDismiss: () -> Unit) {
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * The mirrored picture, placed exactly as the glasses place it.
+ *
+ * The same [ViewportMath] the receiver uses decides where the frame sits, so zoom and pan on the
+ * glasses are reproduced here rather than approximated.
+ */
+@Composable
+private fun MirroredPicture(session: MirrorSession, displayWidth: Int, displayHeight: Int) {
+    var boxSize by remember { mutableStateOf(IntSize.Zero) }
+    var failed by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+    val placement = session.glassesPlacement()
+
+    DisposableEffect(Unit) { onDispose { session.stopLocalPreview() } }
+
+    Box(Modifier.fillMaxSize().clipToBounds().onSizeChanged { boxSize = it }, contentAlignment = Alignment.Center) {
+        if (boxSize.width > 0) {
+            val k = boxSize.width.toFloat() / displayWidth
+            val frameWidth = with(density) { (placement.width * k).toDp() }
+            val frameHeight = with(density) { (placement.height * k).toDp() }
+            AndroidView(
+                factory = { context ->
+                    TextureView(context).apply {
+                        surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                            override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
+                                failed = !session.startLocalPreview(Surface(texture))
+                            }
+                            override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = Unit
+                            override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                                session.stopLocalPreview()
+                                return true
+                            }
+                            override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .offset { IntOffset((placement.left * k).roundToInt(), (placement.top * k).roundToInt()) }
+                    .size(frameWidth, frameHeight),
+            )
+        }
+        if (failed) {
+            Text(
+                "Could not start the local decoder. Switch to Map.",
+                color = Color.White,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }

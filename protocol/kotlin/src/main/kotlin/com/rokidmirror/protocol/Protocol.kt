@@ -21,8 +21,16 @@ object Protocol {
     /** Maximum UDP datagram we emit. 1500 MTU - 20 IPv4 - 8 UDP - safety margin. */
     const val MAX_DATAGRAM_BYTES: Int = 1400
 
-    /** Maximum control frame size accepted on the TCP channel (JSON is tiny; guards memory). */
-    const val MAX_CONTROL_FRAME_BYTES: Int = 64 * 1024
+    /**
+     * Maximum control frame accepted on the TCP channel. Session control is tiny; the size is
+     * set by the display snapshots the receiver sends back for the phone's glasses view, which
+     * are base64 JPEGs. Senders must keep those inside [MAX_PREVIEW_PAYLOAD_BYTES] so a frame
+     * can never reach this ceiling.
+     */
+    const val MAX_CONTROL_FRAME_BYTES: Int = 256 * 1024
+
+    /** Budget for one encoded preview snapshot, comfortably inside the frame limit. */
+    const val MAX_PREVIEW_PAYLOAD_BYTES: Int = 150 * 1024
 
     /** How long the receiver waits for the remaining fragments of an access unit. */
     const val REASSEMBLY_TIMEOUT_MS: Long = 120

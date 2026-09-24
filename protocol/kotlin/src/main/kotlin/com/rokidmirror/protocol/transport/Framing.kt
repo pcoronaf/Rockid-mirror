@@ -10,8 +10,11 @@ import java.io.OutputStream
 
 /** Length-prefixed (32-bit big-endian) frames on the TCP control channel. */
 object Framing {
+    /** Thrown for a frame too large to send; callers drop that message and keep the link. */
+    class FrameTooLarge(val size: Int) : MirrorException(ErrorCode.UNKNOWN, "control frame too large: $size bytes")
+
     fun write(out: OutputStream, frame: ByteArray) {
-        require(frame.size <= Protocol.MAX_CONTROL_FRAME_BYTES)
+        if (frame.size > Protocol.MAX_CONTROL_FRAME_BYTES) throw FrameTooLarge(frame.size)
         val n = frame.size
         out.write(byteArrayOf((n ushr 24).toByte(), (n ushr 16).toByte(), (n ushr 8).toByte(), n.toByte()))
         out.write(frame)
@@ -22,7 +25,7 @@ object Framing {
     fun read(input: InputStream): ByteArray? {
         val din = if (input is DataInputStream) input else DataInputStream(input)
         val n = try { din.readInt() } catch (_: EOFException) { return null }
-        if (n < 0 || n > Protocol.MAX_CONTROL_FRAME_BYTES) throw MirrorException(ErrorCode.UNKNOWN, "control frame too large: $n")
+        if (n < 0 || n > Protocol.MAX_CONTROL_FRAME_BYTES) throw FrameTooLarge(n)
         val buf = ByteArray(n)
         try { din.readFully(buf) } catch (_: EOFException) { return null }
         return buf

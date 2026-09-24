@@ -25,7 +25,7 @@ enum class ErrorCode(val recoverable: Boolean, val userMessage: String) {
 }
 
 /** A typed error with a machine-readable code, a user-safe message and debug-only details. */
-class MirrorException(
+open class MirrorException(
     val code: ErrorCode,
     val details: String? = null,
     cause: Throwable? = null,

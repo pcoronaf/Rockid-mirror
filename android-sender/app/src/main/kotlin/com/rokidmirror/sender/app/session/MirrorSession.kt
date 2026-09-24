@@ -109,6 +109,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
     private val encoder = MediaCodecVideoEncoder(onAccessUnit = { unit ->
         val now = System.nanoTime()
         transport.sendVideo(unit)
+        localPreview?.submit(unit)
         latency.onDispatched(unit.captureTimestampNs, unit.encodeTimestampNs, now, unit.size, unit.isKeyframe)
     })
     private var adaptive: AdaptiveController? = null
@@ -122,6 +123,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
     private var reconnectJob: Job? = null
     private var viewportJob: Job? = null
     private var pendingViewport: ViewportState? = null
+    private var localPreview: LocalPreviewDecoder? = null
     private var pointerJob: Job? = null
     private var pendingPointerSend = false
     /** Screen geometry captured at stream start; injection needs source == whole display. */
@@ -680,13 +682,45 @@ class MirrorSession(private val context: Context, private val container: AppCont
      */
     fun setPreviewEnabled(enabled: Boolean) {
         _previewEnabled.value = enabled
-        if (!enabled) _previewFrame.value = null
+        if (!enabled) { _previewFrame.value = null; stopLocalPreview() }
         scope.launch {
             if (transport.state.value !is TransportState.Connected) return@launch
             runCatching {
                 transport.send(MessageType.PREVIEW_SET, Payloads.PreviewSet.serializer(), Payloads.PreviewSet(enabled))
             }
         }
+    }
+
+    /**
+     * Starts decoding our own outgoing stream into [surface], so the glasses view can show the
+     * real mirrored picture rather than a diagram of it.
+     */
+    fun startLocalPreview(surface: Surface): Boolean {
+        val format = encoder.format.value ?: return false
+        val decoder = localPreview ?: LocalPreviewDecoder { message -> event("Local preview: $message") }.also { localPreview = it }
+        val ok = decoder.start(surface, format.width, format.height, format.csd0, format.csd1)
+        if (ok) encoder.requestKeyFrame()
+        return ok
+    }
+
+    fun stopLocalPreview() {
+        localPreview?.release()
+        localPreview = null
+    }
+
+    val localPreviewRunning: Boolean get() = localPreview?.isRunning == true
+
+    /** Where the whole encoded frame sits on the glasses, in glasses display pixels. */
+    fun glassesPlacement(): com.rokidmirror.protocol.viewport.Placement {
+        val info = _info.value
+        val display = info.capabilities?.display
+        return com.rokidmirror.protocol.viewport.ViewportMath.placement(
+            viewport.state.value,
+            info.sourceWidth.takeIf { it > 0 } ?: viewport.sourceWidth,
+            info.sourceHeight.takeIf { it > 0 } ?: viewport.sourceHeight,
+            display?.width ?: 480,
+            display?.height ?: 640,
+        )
     }
 
     /**

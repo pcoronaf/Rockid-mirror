@@ -93,8 +93,10 @@ From community and vendor documentation (details and sources in `docs/rokid-sdk-
    accessibility service. If the platform declines the window too, the app offers "Display over
    other apps" as a second route.
 8. **Glasses view** on the phone shows what the wearer is seeing, full screen and zoomable:
-   pinch or use the buttons, drag to move, double tap to reset. The glasses send snapshots at the
-   panel's native 480 px width, which carry the camera view and the overlay exactly. A decoded video
+   pinch or use the buttons, drag to move, double tap to reset. While mirroring it shows the real
+   picture, decoded on the phone from the same stream and framed with the same viewport maths the
+   glasses use, with a Map switch for seeing which part of the screen is in view. The camera view
+   and the overlay arrive as snapshots from the glasses at the panel's native width. A decoded video
    frame cannot be read back from the decoder's surface, so while mirroring the phone instead
    draws the region of its own screen that is on the glasses, computed from the viewport it
    already owns: exact, and free. Snapshots stop when the view is closed.

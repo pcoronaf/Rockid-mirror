@@ -19,4 +19,19 @@ object PreviewScaling {
 
     /** Period between snapshots for a requested rate, clamped to something a link can carry. */
     fun intervalMs(fps: Int): Long = (1000L / fps.coerceIn(1, 10))
+
+    /**
+     * Quality and width to try, in order, until an encoded snapshot fits the budget. Sending an
+     * oversized one is not an option: it exceeds the control frame limit and costs the link.
+     */
+    fun attempts(quality: Int, maxWidth: Int): List<Pair<Int, Int>> {
+        val startQuality = quality.coerceIn(20, 90)
+        val startWidth = maxWidth.coerceIn(MIN_EDGE, 960)
+        return listOf(
+            startQuality to startWidth,
+            (startQuality * 7 / 10).coerceAtLeast(25) to startWidth,
+            (startQuality * 6 / 10).coerceAtLeast(25) to (startWidth * 7 / 10).coerceAtLeast(MIN_EDGE),
+            30 to (startWidth / 2).coerceAtLeast(MIN_EDGE),
+        )
+    }
 }

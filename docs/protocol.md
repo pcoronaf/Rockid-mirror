@@ -2,7 +2,8 @@
 
 Two channels between one sender (phone) and one receiver (glasses):
 
-* **Control**: TCP, length-prefixed frames (`u32` big-endian length + bytes), JSON messages
+* **Control**: TCP, length-prefixed frames (`u32` big-endian length + bytes, up to 256 KB because
+  preview snapshots travel here; a message that would exceed it is dropped, never the link), JSON messages
   (`protocol/schema/control-message.schema.json`, payload table in `protocol/schema/payloads.md`).
   Plaintext only during the handshake, then AES-256-GCM.
 * **Video**: UDP datagrams ≤ 1400 bytes: 40-byte cleartext header + AEAD-sealed fragment payload.

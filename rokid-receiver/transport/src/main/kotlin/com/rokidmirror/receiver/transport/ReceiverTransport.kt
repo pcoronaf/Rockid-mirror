@@ -273,6 +273,9 @@ class ReceiverTransport(
             if (closed.get()) return
             try {
                 synchronized(writeLock) { Framing.write(output, c.seal(ControlCodec.encode(factory.create(type, serializer, payload)))) }
+            } catch (e: Framing.FrameTooLarge) {
+                // One message being too big is a bug in that message, not a dead socket.
+                ReceiverLog.w(TAG, "message_dropped_too_large", "type" to type, "bytes" to e.size)
             } catch (e: Exception) {
                 close("write failed: ${e.message}")
             }
