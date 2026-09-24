@@ -194,9 +194,9 @@ object Payloads {
     @Serializable
     data class PreviewSet(
         val enabled: Boolean,
-        val fps: Int = 3,
-        val maxWidth: Int = 320,
-        val quality: Int = 55,
+        val fps: Int = 4,
+        val maxWidth: Int = 480,
+        val quality: Int = 70,
     )
 
     /** What the snapshot shows, so the phone can label it honestly. */

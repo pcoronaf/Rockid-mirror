@@ -92,8 +92,9 @@ From community and vendor documentation (details and sources in `docs/rokid-sdk-
    driven by the Mouse pad. Because that content belongs to the sender, its input needs no
    accessibility service. If the platform declines the window too, the app offers "Display over
    other apps" as a second route.
-8. **Glasses view** on the phone shows what the wearer is seeing. The glasses send back a few
-   small snapshots a second, which carry the camera view and the overlay exactly. A decoded video
+8. **Glasses view** on the phone shows what the wearer is seeing, full screen and zoomable:
+   pinch or use the buttons, drag to move, double tap to reset. The glasses send snapshots at the
+   panel's native 480 px width, which carry the camera view and the overlay exactly. A decoded video
    frame cannot be read back from the decoder's surface, so while mirroring the phone instead
    draws the region of its own screen that is on the glasses, computed from the viewport it
    already owns: exact, and free. Snapshots stop when the view is closed.
