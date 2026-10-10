@@ -40,7 +40,8 @@ The sender and receiver are separate Gradle builds (different runtime constraint
 
 ## Building
 
-Requirements: JDK 17+, Android SDK with platform 35 and build-tools 35 (`ANDROID_HOME` set).
+Requirements: JDK 17+, Android SDK with platform 36 and build-tools 35+ (`ANDROID_HOME` set). The
+sender compiles against SDK 36 (required by Kadb); `targetSdk` stays 35.
 
 ```sh
 (cd protocol/kotlin && ./gradlew test)                       # shared library tests

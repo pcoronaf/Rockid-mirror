@@ -3,7 +3,9 @@
 # for the purpose and license of each dependency.
 [versions]
 agp = "8.10.1"
-kotlin = "2.1.21"
+# 2.2.x so the compiler can read Kadb's newer Kotlin metadata (computer mode); moves the
+# Compose and serialization plugins with it since they are versioned off `kotlin`.
+kotlin = "2.2.20"
 coroutines = "1.10.2"
 serialization = "1.8.1"
 composeBom = "2025.05.01"
@@ -14,7 +16,7 @@ datastore = "1.1.7"
 junit = "4.13.2"
 jmdns = "3.5.9"
 mlkitFace = "16.1.7"
-kadb = "2.1.4"
+kadb = "2.1.1"
 hiddenApiBypass = "6.1"
 
 [libraries]

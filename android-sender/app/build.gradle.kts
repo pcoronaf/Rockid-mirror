@@ -7,7 +7,8 @@ plugins {
 
 android {
     namespace = "com.rokidmirror.sender"
-    compileSdk = 35
+    // 36 because Kadb (computer mode) requires it; targetSdk stays 35, so runtime behaviour is unchanged.
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.rokidmirror.sender"
@@ -33,7 +34,14 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     testOptions.unitTests.isReturnDefaultValues = true
-    packaging { resources.excludes += setOf("META-INF/AL2.0", "META-INF/LGPL2.1") }
+    packaging {
+        resources.excludes += setOf(
+            "META-INF/AL2.0",
+            "META-INF/LGPL2.1",
+            // Kadb pulls BouncyCastle + jspecify, which ship the same multi-release OSGI manifest.
+            "META-INF/versions/9/OSGI-INF/MANIFEST.MF",
+        )
+    }
 }
 
 dependencies {

@@ -5,7 +5,7 @@ Versions are pinned in `gradle/libs.versions.toml`.
 
 | Name | Version | License | Purpose | Used by |
 |---|---|---|---|---|
-| Kotlin (stdlib, Gradle plugin, compose compiler) | 2.1.21 | Apache-2.0 | Language | all |
+| Kotlin (stdlib, Gradle plugin, compose compiler) | 2.2.20 | Apache-2.0 | Language (2.2.x so the compiler reads Kadb's newer metadata) | all |
 | kotlinx-coroutines (core/android/test) | 1.10.2 | Apache-2.0 | Structured concurrency, `StateFlow` | all |
 | kotlinx-serialization-json | 1.8.1 | Apache-2.0 | Versioned JSON control messages, profile persistence, diagnostics export | protocol, sender |
 | Android Gradle Plugin | 8.10.1 | Apache-2.0 | Build | sender, receiver |
