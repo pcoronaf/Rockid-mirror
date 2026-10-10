@@ -67,5 +67,13 @@
             android:name=".app.MirrorService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection|connectedDevice" />
+
+        <!-- Computer mode: the shell-level helper hands its Binder to the app through this
+             provider. The call is accepted only from the shell user (see ShellPrivilegeProvider),
+             so exporting it does not widen access. It holds no data and answers no queries. -->
+        <provider
+            android:name=".privilege.ShellPrivilegeProvider"
+            android:authorities="${applicationId}.shellbridge"
+            android:exported="true" />
     </application>
 </manifest>

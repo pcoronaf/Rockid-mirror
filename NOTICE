@@ -1,0 +1,46 @@
+Rokid Glasses Phone Mirroring
+Copyright (C) 2026 the Rokid Mirror authors
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. See LICENSE for the full text.
+
+The project moved to GPL-3.0-or-later when computer mode adopted code from
+Dextop (below). Earlier revisions carried a placeholder license.
+
+================================================================================
+THIRD-PARTY SOFTWARE AND ATTRIBUTION
+================================================================================
+
+Dextop — github.com/NarYuki/Dextop
+  License: GPL-3.0-or-later.
+  Computer mode's privileged runtime is adapted from Dextop: the handshake that
+  hands the shell helper's Binder to the app through a ContentProvider, the
+  SHELL_UID gate on that provider, the transaction-forwarding model that lets the
+  app reach a framework service with shell identity, the `app_process` launch
+  command, and the reflective trusted-virtual-display creation with its degrading
+  flag ladder. Adapted files name Dextop in their header. This is why the project
+  is GPL-3.0-or-later.
+
+Kadb — github.com/flyfishxu/Kadb (com.flyfishxu:kadb)
+  License: Apache-2.0.
+  Used to pair with, and connect to, the phone's own Wireless debugging endpoint.
+
+spake2-java — github.com/Flyfish233/spake2-java (com.github.Flyfish233:spake2-java)
+  License: Apache-2.0.
+  SPAKE2 key exchange for ADB pairing; a transitive dependency of Kadb.
+
+HiddenApiBypass — github.com/LSPosed/AndroidHiddenApiBypass
+  License: Apache-2.0.
+  Lets the shell-level helper reach the hidden display and input APIs.
+
+scrcpy — github.com/Genymobile/scrcpy
+  License: Apache-2.0.
+  No scrcpy code is included. Its approach informed computer mode's design:
+  creating a virtual display as the shell user and launching an app onto it,
+  and injecting input to a specific display. Credit to Romain Vimont (@rom1v).
+
+Android-Dex — github.com/Shrey113/Android-Dex
+  Proprietary; no code is used. Acknowledged for the per-app-display and
+  notification/heads-up ideas discussed during design.

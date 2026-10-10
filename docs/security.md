@@ -69,6 +69,38 @@ through a manifest `queries` declaration for launcher activities rather than QUE
 Launching another app onto a second display is subject to platform policy that has tightened over
 releases; refusals are reported to the user rather than worked around.
 
+## Computer mode (shell-level helper)
+
+Computer mode runs real apps on a *trusted* virtual display sent to the glasses and injects input
+onto it. Both require the `shell` identity, which an ordinary app cannot hold. The app therefore
+pairs once with the phone's own Wireless debugging endpoint and launches a small helper through
+`app_process`, which runs as `shell`. The helper hands a Binder back to the app
+(`ShellPrivilegeProvider`, which accepts it only from `Process.SHELL_UID`); the app then forwards
+system-service transactions and a few `am`/`input` commands through it. This is a real increase in
+this app's effective privilege on the phone, granted deliberately by the user, and it is the one
+place the app reaches beyond the standard, consent-gated capture path. It is documented rather than
+hidden, opt-in, and off until the user pairs.
+
+Boundaries that still hold:
+* **No screen capture.** Computer mode never captures the phone's own display. The glasses show
+  only the second display the app created and launches apps onto; the phone screen stays private.
+* **The helper is minimal.** It forwards transactions and runs commands and nothing else. It holds
+  no app state, inspects no screen content, and logs nothing about what passes through it. It is
+  not exported to other apps: the provider gate rejects any caller that is not the shell user.
+* **Pairing material stays on the device.** The ADB private key is kept in app-private storage,
+  which is excluded from backup and transfer (`data_extraction_rules`), and never logged. It is the
+  one long-lived secret computer mode adds.
+* **Lifetime.** The helper dies with the shell session / on reboot; the app detects this
+  (`ShellBridge.onDied`) and returns to the pairing prompt. Re-pairing is not needed because the
+  stored key persists; reconnecting re-launches the helper.
+* **Secure-display flag is NOT set.** The trusted display is created without a secure flag, so
+  `FLAG_SECURE` windows (banking apps, etc.) stay blacked out on the glasses exactly as the
+  platform intends. A user-facing opt-in to override this, with a warning, is a later step and is
+  not part of this foundation; DRM-protected video (Widevine L1) stays black regardless.
+
+This supersedes the earlier blanket statement that the app uses "Android standard APIs only on the
+phone": computer mode is an explicit, opt-in exception, bounded as above.
+
 ## Threat model notes
 * Passive LAN sniffing: sees ports, packet sizes/timing and the cleartext 40-byte headers (frame
   ids, timestamps), not content.

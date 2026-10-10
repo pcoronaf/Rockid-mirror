@@ -27,6 +27,10 @@ import com.rokidmirror.sender.capture.CaptureMode
 import com.rokidmirror.sender.capture.ExtendedDisplayController
 import com.rokidmirror.sender.capture.LaunchableApp
 import com.rokidmirror.sender.capture.MediaProjectionCaptureController
+import com.rokidmirror.sender.computer.ComputerControl
+import com.rokidmirror.sender.computer.ComputerDisplayController
+import com.rokidmirror.sender.privilege.ShellBridge
+import com.rokidmirror.sender.privilege.WirelessDebug
 import com.rokidmirror.sender.control.SenderEvent
 import com.rokidmirror.sender.control.SenderState
 import com.rokidmirror.sender.control.SenderStateMachine
@@ -76,6 +80,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
         const val TAG = "Session"
         const val RECONNECT_WINDOW_MS = 60_000L
         const val VIEWPORT_SEND_INTERVAL_MS = 40L
+        const val KEYCODE_APP_SWITCH = 187
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -115,6 +120,14 @@ class MirrorSession(private val context: Context, private val container: AppCont
     private var adaptive: AdaptiveController? = null
     private var synthetic: SyntheticSource? = null
     private val extended = ExtendedDisplayController(context)
+
+    /** Computer mode: a trusted second display the phone drives as a desktop for the glasses. */
+    private val computerDisplay = ComputerDisplayController()
+    private var computer: ComputerControl? = null
+    private var isComputer = false
+    val wirelessDebug: WirelessDebug by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { WirelessDebug(context) }
+    val computerAvailable: Boolean get() = ShellBridge.available
+    val isComputerActive: Boolean get() = isComputer
 
     private var endpoint: ReceiverEndpoint? = null
     private var pendingCode: CompletableDeferred<String>? = null
@@ -254,6 +267,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
             try {
                 // Mirroring replaces any extended display or generated source.
                 if (isExtended) { runCatching { extended.stop() }; isExtended = false }
+                clearComputer()
                 PointerService.instance?.targetDisplayId = android.view.Display.DEFAULT_DISPLAY
                 isSynthetic = false
                 val source = displayGeometry()
@@ -279,6 +293,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
         stateMutex.withLock {
             try {
                 isSynthetic = false
+                clearComputer()
                 isExtended = true
                 val caps = (transport.state.value as? TransportState.Connected)?.capabilities
                     ?: throw MirrorException(ErrorCode.RECEIVER_NOT_FOUND, "not connected to a receiver")
@@ -357,6 +372,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
         stateMutex.withLock {
             try {
                 isSynthetic = true
+                clearComputer()
                 syntheticPattern = pattern
                 val source = CaptureGeometry(720, 1280, 320)
                 val surface = startEncoder(source)
@@ -368,6 +384,62 @@ class MirrorSession(private val context: Context, private val container: AppCont
                 throw e
             }
         }
+    }
+
+    /**
+     * Computer mode: the glasses become a trusted second display that the phone runs real apps on
+     * and drives as a trackpad. Needs the Wireless debugging helper ([computerAvailable]); the
+     * display and input use its shell identity. The app's own screen is never captured.
+     */
+    suspend fun startComputerStreaming(app: LaunchableApp, width: Int, height: Int, dpi: Int) {
+        stateMutex.withLock {
+            if (!ShellBridge.available) throw MirrorException(ErrorCode.PLATFORM_API_UNAVAILABLE, "pair with Wireless debugging first")
+            try {
+                if (isExtended) { runCatching { extended.stop() }; isExtended = false }
+                isSynthetic = false
+                clearComputer()
+                val source = CaptureGeometry(StreamNegotiator.align(width), StreamNegotiator.align(height), dpi)
+                val surface = startEncoder(source)
+                val handle = computerDisplay.create(surface, source.width, source.height, source.densityDpi)
+                isComputer = true
+                computer = ComputerControl(handle.displayId, source.width, source.height)
+                val component = context.packageManager.getLaunchIntentForPackage(app.packageName)?.component?.flattenToString()
+                    ?: throw MirrorException(ErrorCode.UNKNOWN, "${app.label} has no launchable activity")
+                beginStream("Computer: ${app.label}", source)
+                setMouseMode(true)
+                if (computer?.launch(component) != true) {
+                    event("${app.label} did not open on the computer display; try another app")
+                } else {
+                    event("Computer display ${source.width}x${source.height} (id ${handle.displayId}) running ${app.label}")
+                }
+            } catch (e: MirrorException) {
+                clearComputer()
+                runCatching { encoder.stop() }
+                dispatch(SenderEvent.Failed(e.code, e.details))
+                throw e
+            } catch (e: Exception) {
+                clearComputer()
+                runCatching { encoder.stop() }
+                val code = ErrorCode.PLATFORM_API_UNAVAILABLE
+                dispatch(SenderEvent.Failed(code, e.message))
+                throw MirrorException(code, e.message, e)
+            }
+        }
+    }
+
+    /** Launches another app onto the running computer display without restarting the stream. */
+    fun launchOnComputer(app: LaunchableApp) {
+        val control = computer ?: run { event("Computer mode is not running"); return }
+        val component = context.packageManager.getLaunchIntentForPackage(app.packageName)?.component?.flattenToString()
+            ?: run { event("${app.label} has no launchable activity"); return }
+        if (control.launch(component)) event("Opened ${app.label}") else event("${app.label} did not open")
+        encoder.requestKeyFrame()
+    }
+
+    private fun clearComputer() {
+        computer = null
+        if (isComputer) runCatching { computerDisplay.stop() }
+        isComputer = false
     }
 
     private suspend fun startEncoder(source: CaptureGeometry): Surface {
@@ -420,6 +492,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
                 PointerService.instance?.targetDisplayId = android.view.Display.DEFAULT_DISPLAY
                 isExtended = false
             }
+            clearComputer()
             runCatching { capture.stop() }
             runCatching { encoder.stop() }
             if (transport.state.value is TransportState.Connected) runCatching { transport.send(MessageType.STREAM_STOP, Payloads.StreamStop.serializer(), Payloads.StreamStop(reason)) }
@@ -776,6 +849,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
      */
     val pointerInjectionAvailable: Boolean
         get() {
+            if (isComputer) return computer != null
             if (isExtended) return extended.isActive
             if (isSynthetic) return false
             val src = sourceGeometry ?: return false
@@ -818,6 +892,22 @@ class MirrorSession(private val context: Context, private val container: AppCont
     fun pointerRecents() = withInjector("recents") { svc, _, _ -> svc.recents() }
 
     private fun withInjector(what: String, block: (PointerService, Float, Float) -> Unit) {
+        // Computer mode injects onto the trusted display through the shell helper, so no
+        // accessibility service is involved and any app on that display accepts the event.
+        val computer = this.computer
+        if (isComputer && computer != null) {
+            val p = pointer.position
+            when (what) {
+                "tap" -> computer.tapAt(p.x, p.y)
+                "long press" -> computer.longPressAt(p.x, p.y)
+                "back" -> computer.back()
+                "home" -> computer.home()
+                "recents" -> computer.key(KEYCODE_APP_SWITCH)
+                else -> lastScroll?.let { (dx, dy) -> computer.scrollFrom(p.x, p.y, dx, dy) }
+            }
+            encoder.requestKeyFrame()
+            return
+        }
         // In extended mode the content is our own view hierarchy, so events go straight in.
         // That needs no accessibility service and cannot be refused by the platform.
         val workspace = if (isExtended) this.workspace else null

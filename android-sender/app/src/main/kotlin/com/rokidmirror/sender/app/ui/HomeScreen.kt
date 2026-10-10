@@ -34,7 +34,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import android.content.Intent
+import android.provider.Settings
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -124,6 +128,8 @@ fun HomeScreen(
             OutlinedButton(onClick = { onStartSynthetic(SyntheticPattern.TEST_PATTERN) }, enabled = state is SenderState.Ready, modifier = Modifier.weight(1f)) { Text("Test pattern") }
             OutlinedButton(onClick = { onStartSynthetic(SyntheticPattern.MATRIX_RAIN) }, enabled = state is SenderState.Ready, modifier = Modifier.weight(1f)) { Text("Matrix rain") }
         }
+
+        ComputerModeCard(session, canStart = state is SenderState.Ready)
 
         if (session.isExtendedActive) {
             var showApps by remember { mutableStateOf(false) }
@@ -438,4 +444,110 @@ private fun statusLabel(state: SenderState): String = when (state) {
     is SenderState.Paused -> "Paused"
     is SenderState.Recovering -> "Reconnecting (${state.attempt})"
     is SenderState.Error -> "Error"
+}
+
+/**
+ * Computer mode: pair with the phone's own Wireless debugging once, then run a real app on a
+ * trusted display sent to the glasses, with the phone as a trackpad. The pairing step is on the
+ * phone alone; no PC is involved. See docs/computer-mode.md.
+ */
+@Composable
+private fun ComputerModeCard(session: MirrorSession, canStart: Boolean) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var available by remember { mutableStateOf(session.computerAvailable) }
+    var busy by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
+    var pairPort by remember { mutableStateOf("") }
+    var pairCode by remember { mutableStateOf("") }
+    var connectPort by remember { mutableStateOf("") }
+    var showApps by remember { mutableStateOf(false) }
+
+    // Reflect helper death (e.g. after a reboot) back to the pairing UI.
+    LaunchedEffect(Unit) { session.wirelessDebug; ShellBridgeWatcher.bind { available = session.computerAvailable } }
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Computer mode", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Run a real app on the glasses as a second screen and use the phone as a trackpad. " +
+                    "This needs a one-time pairing with the phone's own Wireless debugging — no PC, " +
+                    "just the phone. It grants the app shell access on this device; see the docs.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            status?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary) }
+
+            if (!available) {
+                TextButton(onClick = {
+                    runCatching { context.startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                }) { Text("Open Developer options → Wireless debugging") }
+
+                Text("1. Pair (from \"Pair device with pairing code\")", style = MaterialTheme.typography.labelMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(pairPort, { pairPort = it.filter(Char::isDigit) }, label = { Text("Pair port") }, singleLine = true, modifier = Modifier.weight(1f))
+                    OutlinedTextField(pairCode, { pairCode = it.filter(Char::isDigit) }, label = { Text("6-digit code") }, singleLine = true, modifier = Modifier.weight(1f))
+                }
+                Button(
+                    enabled = !busy && pairPort.isNotBlank() && pairCode.length == 6,
+                    onClick = {
+                        busy = true; status = "Pairing…"
+                        scope.launch {
+                            val r = session.wirelessDebug.pair(pairCode, pairPort.toInt())
+                            status = if (r.isSuccess) "Paired. Now connect below." else "Pairing failed: ${r.exceptionOrNull()?.message}"
+                            busy = false
+                        }
+                    },
+                ) { Text("Pair") }
+
+                Text("2. Connect (port from the Wireless debugging screen; blank tries auto-detect)", style = MaterialTheme.typography.labelMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(connectPort, { connectPort = it.filter(Char::isDigit) }, label = { Text("Connect port") }, singleLine = true, modifier = Modifier.weight(1f))
+                    Button(
+                        enabled = !busy,
+                        onClick = {
+                            busy = true; status = "Connecting…"
+                            scope.launch {
+                                val r = session.wirelessDebug.connectAndLaunchHelper(connectPort.toIntOrNull())
+                                available = session.computerAvailable
+                                status = if (r.isSuccess) "Helper connected." else "Connect failed: ${r.exceptionOrNull()?.message}"
+                                busy = false
+                            }
+                        },
+                    ) { Text("Connect") }
+                }
+            } else {
+                Text("Helper connected. Pick an app to run on the glasses.", style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(enabled = canStart, onClick = { showApps = true }, modifier = Modifier.weight(1f)) {
+                        Text(if (session.isComputerActive) "Switch app" else "Start computer")
+                    }
+                }
+                if (!canStart && !session.isComputerActive) {
+                    Text("Connect to the glasses first, then start computer mode.", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+
+    if (showApps) {
+        AppPickerDialog(
+            apps = remember { session.launchableApps() },
+            onPick = { app ->
+                showApps = false
+                if (session.isComputerActive) {
+                    session.launchOnComputer(app)
+                } else {
+                    scope.launch { runCatching { session.startComputerStreaming(app, 480, 640, 240) } }
+                }
+            },
+            onDismiss = { showApps = false },
+        )
+    }
+}
+
+/** Bridges [com.rokidmirror.sender.privilege.ShellBridge] death callbacks to a Compose refresh. */
+private object ShellBridgeWatcher {
+    fun bind(onChange: () -> Unit) {
+        com.rokidmirror.sender.privilege.ShellBridge.onDied = onChange
+    }
 }

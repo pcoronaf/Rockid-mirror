@@ -57,6 +57,10 @@ dependencies {
     implementation(libs.compose.material3)
     debugImplementation(libs.compose.ui.tooling)
 
+    // Computer mode: Wireless-debugging pairing and the shell helper's hidden-API access.
+    implementation(libs.kadb)
+    implementation(libs.hiddenapibypass)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 }

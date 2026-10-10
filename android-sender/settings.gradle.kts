@@ -10,6 +10,12 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Kadb's SPAKE2 pairing dependency is published only on JitPack. Scope JitPack to that
+        // one group so nothing else is pulled through it.
+        maven {
+            url = uri("https://jitpack.io")
+            content { includeGroup("com.github.Flyfish233") }
+        }
     }
     versionCatalogs {
         create("libs") { from(files("../gradle/libs.versions.toml")) }

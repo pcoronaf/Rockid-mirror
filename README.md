@@ -8,11 +8,11 @@ Two apps plus a shared protocol library:
 
 | Part | What it is | Status |
 |---|---|---|
-| `android-sender/` | Kotlin/Compose phone app: MediaProjection → VirtualDisplay → H.264 MediaCodec Surface encoder → encrypted LAN transport; DNS-SD discovery; pairing; zoom/pan/profiles; mouse mode; extended screen; adaptive bitrate; diagnostics | running on a Galaxy S25 |
+| `android-sender/` | Kotlin/Compose phone app: MediaProjection → VirtualDisplay → H.264 MediaCodec Surface encoder → encrypted LAN transport; DNS-SD discovery; pairing; zoom/pan/profiles; mouse mode; extended screen; computer mode (trusted display via Wireless debugging); adaptive bitrate; diagnostics | running on a Galaxy S25 |
 | `rokid-receiver/` | Android 12 (API 32) app for the glasses: foreground service holding the link, control server + pairing, AEAD UDP video, MediaCodec decode straight to a SurfaceView, zero-copy fit/fill/zoom/pan viewport, overlay, optional head-motion viewport | running on Rokid Glasses |
 | `protocol/` | Shared wire protocol: versioned JSON control messages, 40-byte video packet header, fragmentation/reassembly, ECDH + HKDF + AES-GCM session crypto, bitwise commit/reveal pairing | 39 JVM tests |
 | `tools/` | `mock-receiver` (desktop stand-in for the glasses), `stream-generator` (replays an H.264 file over the protocol), `packet-inspector`, `latency-marker` procedure, `e2e-loopback.sh` | builds; loopback e2e passes |
-| `docs/` | architecture, protocol, Rokid SDK findings, latency testing, security, dependencies, M0 feasibility report | see below |
+| `docs/` | architecture, protocol, Rokid SDK findings, latency testing, security, dependencies, computer mode, M0 feasibility report | see below |
 
 **Where this stands against the spec's milestones:** the M0 gate is **closed: proceed with
 constraints**. On real hardware the glasses sustain 720p60 decode at 4250 kbps, and the software
@@ -122,4 +122,6 @@ FLAG_SECURE / DRM / consent rules are respected, not bypassed. Details: `docs/se
 
 ## License
 
-Placeholder — see `LICENSE`. Third-party licenses: `docs/dependencies.md`.
+GPL-3.0-or-later — see [`LICENSE`](LICENSE). The project adopted this license when computer mode
+took in code adapted from [Dextop](https://github.com/NarYuki/Dextop) (GPL-3.0). Attribution and
+third-party licenses are in [`NOTICE`](NOTICE) and [`docs/dependencies.md`](docs/dependencies.md).
