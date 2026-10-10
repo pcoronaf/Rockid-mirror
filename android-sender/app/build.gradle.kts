@@ -35,6 +35,9 @@ android {
     kotlinOptions { jvmTarget = "17" }
     testOptions.unitTests.isReturnDefaultValues = true
     packaging {
+        // Compress the dex files inside the APK. Kadb's BouncyCastle made the uncompressed APK
+        // ~36 MB; compressed it is well under the limit for sending it to the phone.
+        dex { useLegacyPackaging = true }
         resources.excludes += setOf(
             "META-INF/AL2.0",
             "META-INF/LGPL2.1",
