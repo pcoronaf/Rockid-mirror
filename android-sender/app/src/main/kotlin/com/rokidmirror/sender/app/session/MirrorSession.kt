@@ -125,6 +125,18 @@ class MirrorSession(private val context: Context, private val container: AppCont
     private val computerDisplay = ComputerDisplayController()
     private var computer: ComputerControl? = null
     private var isComputer = false
+    /**
+     * Deep black: an optional GPU pass that crushes near-black to true black before encoding.
+     * The glasses' panel dithers every grey, worst in dark areas, so dark backgrounds arrive as
+     * speckle; true black is the one level it shows cleanly. Off by default because it costs a
+     * GPU pass per frame. Synthetic patterns skip it: they already draw through their own EGL.
+     */
+    private var toneMap: ToneMapPipeline? = null
+    private val _deepBlack = MutableStateFlow(false)
+    val deepBlack: StateFlow<Boolean> = _deepBlack.asStateFlow()
+    private val _blackLevel = MutableStateFlow(0.12f)
+    val blackLevel: StateFlow<Float> = _blackLevel.asStateFlow()
+
     val wirelessDebug: WirelessDebug by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { WirelessDebug(context) }
     val computerAvailable: Boolean get() = ShellBridge.available
     val isComputerActive: Boolean get() = isComputer
@@ -273,7 +285,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
                 val source = displayGeometry()
                 capture.setSourceGeometry(source)
                 val surface = startEncoder(source)
-                capture.start(resultCode, data, surface, CaptureGeometry(encoderConfig!!.width, encoderConfig!!.height, source.densityDpi))
+                capture.start(resultCode, data, captureTarget(surface, encoderConfig!!.width, encoderConfig!!.height), CaptureGeometry(encoderConfig!!.width, encoderConfig!!.height, source.densityDpi))
                 beginStream(sourceLabel, source)
             } catch (e: MirrorException) {
                 MirrorLog.e(TAG, "start_failed", e)
@@ -303,7 +315,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
                 val dpi = caps.display.densityDpi.takeIf { it > 0 } ?: 240
                 val source = CaptureGeometry(width, height, dpi)
                 val surface = startEncoder(source)
-                extended.start(width, height, dpi, surface)
+                extended.start(width, height, dpi, captureTarget(surface, encoderConfig!!.width, encoderConfig!!.height))
                 PointerService.instance?.targetDisplayId = extended.displayId
                 _extendedDisplayId.value = extended.displayId
                 beginStream("Extended screen", source)
@@ -400,7 +412,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
                 clearComputer()
                 val source = CaptureGeometry(StreamNegotiator.align(width), StreamNegotiator.align(height), dpi)
                 val surface = startEncoder(source)
-                val handle = computerDisplay.create(surface, source.width, source.height, source.densityDpi)
+                val handle = computerDisplay.create(captureTarget(surface, encoderConfig!!.width, encoderConfig!!.height), source.width, source.height, source.densityDpi)
                 isComputer = true
                 computer = ComputerControl(handle.displayId, source.width, source.height)
                 val component = context.packageManager.getLaunchIntentForPackage(app.packageName)?.component?.flattenToString()
@@ -474,6 +486,55 @@ class MirrorSession(private val context: Context, private val container: AppCont
         isComputer = false
     }
 
+    /**
+     * What the capture should render into: the encoder's surface directly, or the tone-mapping
+     * pass in front of it. Falls back to the direct surface if the GPU pass cannot be built, so
+     * enabling deep black can never cost you the stream.
+     */
+    private fun captureTarget(encoderSurface: Surface, width: Int, height: Int): Surface {
+        val previous = toneMap
+        toneMap = null
+        val target = if (!_deepBlack.value) {
+            encoderSurface
+        } else {
+            runCatching {
+                ToneMapPipeline(encoderSurface, width, height)
+                    .also { it.setLevels(_blackLevel.value, 1f, 1f); toneMap = it }
+                    .inputSurface
+            }.getOrElse {
+                event("Deep black unavailable (${it.message}); mirroring without it")
+                encoderSurface
+            }
+        }
+        // The previous pass drew into the old encoder surface, which has already been replaced.
+        previous?.release()
+        return target
+    }
+
+    private fun releaseToneMap() {
+        toneMap?.release()
+        toneMap = null
+    }
+
+    /** Turns the deep-black pass on or off, restarting the encoder so it takes effect at once. */
+    fun setDeepBlack(enabled: Boolean) {
+        if (_deepBlack.value == enabled) return
+        _deepBlack.value = enabled
+        scope.launch {
+            stateMutex.withLock {
+                val cfg = encoderConfig
+                if (cfg != null && !isSynthetic) runCatching { restartEncoder(cfg) }
+            }
+            event(if (enabled) "Deep black on" else "Deep black off")
+        }
+    }
+
+    /** Input level treated as black, 0..0.6. Applies immediately while the pass is running. */
+    fun setBlackLevel(level: Float) {
+        _blackLevel.value = level.coerceIn(0f, 0.6f)
+        toneMap?.setLevels(_blackLevel.value, 1f, 1f)
+    }
+
     private suspend fun startEncoder(source: CaptureGeometry): Surface {
         val caps = (transport.state.value as? TransportState.Connected)?.capabilities
             ?: throw MirrorException(ErrorCode.RECEIVER_NOT_FOUND, "not connected to a receiver")
@@ -525,6 +586,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
                 isExtended = false
             }
             clearComputer()
+            releaseToneMap()
             runCatching { capture.stop() }
             runCatching { encoder.stop() }
             if (transport.state.value is TransportState.Connected) runCatching { transport.send(MessageType.STREAM_STOP, Payloads.StreamStop.serializer(), Payloads.StreamStop(reason)) }
@@ -582,10 +644,10 @@ class MirrorSession(private val context: Context, private val container: AppCont
         encoderConfig = newConfig
         if (isExtended) {
             extended.resize(newConfig.width, newConfig.height, sourceGeometry?.densityDpi ?: 240)
-            extended.setSurface(surface)
+            extended.setSurface(captureTarget(surface, newConfig.width, newConfig.height))
         } else if (!isSynthetic) {
             capture.resize(newConfig.width, newConfig.height, sourceGeometry?.densityDpi ?: 320)
-            capture.setSurface(surface)
+            capture.setSurface(captureTarget(surface, newConfig.width, newConfig.height))
         } else {
             synthetic?.stop()
             synthetic = SyntheticSource(surface, newConfig.width, newConfig.height, newConfig.fps, syntheticPattern).also { it.start() }

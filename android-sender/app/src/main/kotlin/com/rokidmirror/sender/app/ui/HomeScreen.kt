@@ -129,6 +129,8 @@ fun HomeScreen(
             OutlinedButton(onClick = { onStartSynthetic(SyntheticPattern.MATRIX_RAIN) }, enabled = state is SenderState.Ready, modifier = Modifier.weight(1f)) { Text("Matrix rain") }
         }
 
+        DeepBlackCard(session)
+
         ComputerModeCard(session, canStart = state is SenderState.Ready)
 
         if (session.isExtendedActive) {
@@ -548,5 +550,34 @@ private fun ComputerModeCard(session: MirrorSession, canStart: Boolean) {
 private object ShellBridgeWatcher {
     fun bind(onChange: () -> Unit) {
         com.rokidmirror.sender.privilege.ShellBridge.onDied = onChange
+    }
+}
+
+/**
+ * Deep black. The glasses' panel has few real brightness levels and fakes the rest by scattering
+ * lit pixels, so grey areas arrive as speckle — worst in dark ones, which is why a dark background
+ * looks like sand. True black is the one level it renders cleanly, so pulling near-black down to
+ * it removes the worst of the grain and, on a see-through display, makes those areas transparent.
+ */
+@Composable
+private fun DeepBlackCard(session: MirrorSession) {
+    val on by session.deepBlack.collectAsState()
+    val level by session.blackLevel.collectAsState()
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Deep black", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                Switch(checked = on, onCheckedChange = { session.setDeepBlack(it) })
+            }
+            Text(
+                "Turns dark greys into true black before sending, so dark backgrounds stop looking " +
+                    "grainy on the glasses and show through properly. Costs one GPU pass per frame.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (on) {
+                Text("Black level: %.2f — raise it until the background goes clean, lower it if dark detail disappears".format(level), style = MaterialTheme.typography.bodySmall)
+                Slider(value = level, onValueChange = { session.setBlackLevel(it) }, valueRange = 0f..0.6f)
+            }
+        }
     }
 }
