@@ -36,6 +36,8 @@ class ComputerDisplayController {
     /** A live computer display; [displayId] is where apps launch and input is injected. */
     inner class Handle internal constructor(
         val displayId: Int,
+        /** Which rung of the flag ladder the system accepted; touch injection depends on it. */
+        val flags: String,
         private val service: Any,
         private val callback: Any,
         private val releaseMethod: Method,
@@ -150,7 +152,7 @@ class ComputerDisplayController {
                 val (id, callback) = attempt(flags)
                 if (id >= 0) {
                     MirrorLog.i(TAG, "computer_display_created", "id" to id, "flags" to label)
-                    return Handle(id, service, callback, releaseMethod, resizeMethod, setSurfaceMethod).also { handle = it }
+                    return Handle(id, label, service, callback, releaseMethod, resizeMethod, setSurfaceMethod).also { handle = it }
                 }
                 outcomes += "$label: declined (returned $id)"
                 runCatching { releaseMethod.invoke(service, callback) }

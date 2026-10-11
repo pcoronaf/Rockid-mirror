@@ -58,9 +58,17 @@ class ComputerControl(val displayId: Int, val width: Int, val height: Int) {
         const val TAG = "ComputerControl"
     }
 
+    /** Why the last command failed, so the session can tell the user instead of failing silently. */
+    @Volatile
+    var lastError: String? = null
+        private set
+
     private fun run(args: Array<String>): Boolean {
         val result = ShellBridge.execute(*args)
-        if (!result.succeeded) MirrorLog.w(TAG, "command_failed", "cmd" to args.firstOrNull(), "err" to result.error)
+        if (!result.succeeded) {
+            lastError = "${args.take(4).joinToString(" ")} -> exit ${result.exitCode} ${result.error.ifBlank { result.output }}".trim().take(200)
+            MirrorLog.w(TAG, "command_failed", "cmd" to args.firstOrNull(), "err" to result.error)
+        }
         return result.succeeded
     }
 

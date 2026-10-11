@@ -423,7 +423,12 @@ class MirrorSession(private val context: Context, private val container: AppCont
                 if (computer?.launch(component) != true) {
                     event("${app.label} did not open on the computer display; try another app")
                 } else {
-                    event("Computer display ${source.width}x${source.height} (id ${handle.displayId}) running ${app.label}")
+                    event("Computer display ${source.width}x${source.height} (id ${handle.displayId}, ${handle.flags}) running ${app.label}")
+                }
+                // Touch injection depends on which flags the system accepted, so say so up front
+                // rather than leaving a display that renders but cannot be touched unexplained.
+                if (!handle.flags.contains("touch")) {
+                    event("Note: this display was created without the touch flag, so taps may be ignored")
                 }
             } catch (e: MirrorException) {
                 clearComputer()
@@ -486,6 +491,16 @@ class MirrorSession(private val context: Context, private val container: AppCont
     fun keyOnComputer(keyCode: Int) {
         val control = computer ?: run { event("Computer mode is not running"); return }
         scope.launch { control.key(keyCode); encoder.requestKeyFrame() }
+    }
+
+    private var lastInjectionReportNs = 0L
+
+    /** At most one injection complaint every few seconds, however fast the taps come. */
+    private fun reportInjectionFailure(detail: String) {
+        val now = System.nanoTime()
+        if (now - lastInjectionReportNs < 5_000_000_000L) return
+        lastInjectionReportNs = now
+        event("Computer input failed: $detail")
     }
 
     /** Launches another app onto the running computer display without restarting the stream. */
@@ -1038,14 +1053,17 @@ class MirrorSession(private val context: Context, private val container: AppCont
             val scroll = lastScroll
             // Injection runs a shell command over a blocking Binder call; never on the caller thread.
             scope.launch {
-                when (what) {
+                val ok = when (what) {
                     "tap" -> computer.tapAt(p.x, p.y)
                     "long press" -> computer.longPressAt(p.x, p.y)
                     "back" -> computer.back()
                     "home" -> computer.home()
                     "recents" -> computer.key(ComputerKeys.APP_SWITCH)
-                    else -> scroll?.let { (dx, dy) -> computer.scrollFrom(p.x, p.y, dx, dy) }
+                    else -> scroll?.let { (dx, dy) -> computer.scrollFrom(p.x, p.y, dx, dy) } ?: true
                 }
+                // A tap that the system rejects must not fail silently: that is indistinguishable
+                // from an app ignoring it, and it is the difference between a bug and a dead end.
+                if (!ok) reportInjectionFailure(computer.lastError ?: "the $what command failed")
             }
             encoder.requestKeyFrame()
             return
