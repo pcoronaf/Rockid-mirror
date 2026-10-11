@@ -35,8 +35,6 @@ class OverlayView(context: Context) : FrameLayout(context) {
     private val info = text(10f, Gravity.START, bottomStack)
     private val indicator = View(context).apply { setBackgroundColor(Color.WHITE); visibility = GONE }
     private val cursor = CursorView(context).apply { visibility = GONE }
-    /** Locally drawn grey steps, shown only while idle; see [setTestCard]. */
-    private val testCard = GreyRampView(context).apply { visibility = GONE }
 
     var debugEnabled: Boolean = false
         set(value) { field = value; if (!value) debug.visibility = GONE }
@@ -61,7 +59,6 @@ class OverlayView(context: Context) : FrameLayout(context) {
     init {
         // Always-visible "mirroring active" indicator (spec security requirement).
         addView(indicator, LayoutParams(10, 10, Gravity.TOP or Gravity.END).apply { setMargins(0, 8, 8, 0) })
-        addView(testCard, LayoutParams(LayoutParams.MATCH_PARENT, TEST_CARD_HEIGHT, Gravity.CENTER))
         addView(cursor, LayoutParams(CURSOR_SIZE, CURSOR_SIZE))
     }
 
@@ -97,30 +94,6 @@ class OverlayView(context: Context) : FrameLayout(context) {
 
     private companion object {
         const val CURSOR_SIZE = 36
-        const val TEST_CARD_HEIGHT = 44
-    }
-
-    /** Five steps from black to white, plus a smooth gradient, drawn locally. */
-    private class GreyRampView(context: Context) : View(context) {
-        private val paint = Paint()
-        private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 9f }
-
-        override fun onDraw(canvas: Canvas) {
-            val steps = intArrayOf(0, 64, 128, 192, 255)
-            val bandWidth = width / steps.size.toFloat()
-            val half = height / 2f
-            steps.forEachIndexed { i, v ->
-                paint.color = Color.rgb(v, v, v)
-                canvas.drawRect(i * bandWidth, 0f, (i + 1) * bandWidth, half, paint)
-            }
-            // A continuous ramp underneath: banding or speckle here is the clearest tell.
-            for (x in 0 until width) {
-                val v = (x * 255 / width.coerceAtLeast(1)).coerceIn(0, 255)
-                paint.color = Color.rgb(v, v, v)
-                canvas.drawRect(x.toFloat(), half, x + 1f, height.toFloat(), paint)
-            }
-            canvas.drawText("grey test card (drawn on the glasses)", 4f, half - 3f, label)
-        }
     }
 
     /** A crosshair with a bright core: legible on a monochrome see-through panel. */
@@ -149,15 +122,7 @@ class OverlayView(context: Context) : FrameLayout(context) {
 
     fun setStatus(s: String) = post { status.text = s; if (chromeVisible) status.visibility = VISIBLE }
     fun setInfo(s: String) = post { info.text = s; if (chromeVisible) info.visibility = VISIBLE }
-    /**
-     * Also drives the grey test card: it appears only while idle, so it can never cover a stream.
-     * The card is drawn by the glasses with no video in the path, which separates a panel that
-     * dithers mid-greys (card speckled) from grain introduced by the video pipeline (card smooth).
-     */
-    fun setStreamingIndicator(on: Boolean) = post {
-        indicator.visibility = if (on) VISIBLE else GONE
-        testCard.visibility = if (on) GONE else VISIBLE
-    }
+    fun setStreamingIndicator(on: Boolean) = post { indicator.visibility = if (on) VISIBLE else GONE }
     fun showPairingCode(formatted: String?) = post {
         code.text = formatted ?: ""
         code.visibility = if (formatted != null) VISIBLE else GONE
