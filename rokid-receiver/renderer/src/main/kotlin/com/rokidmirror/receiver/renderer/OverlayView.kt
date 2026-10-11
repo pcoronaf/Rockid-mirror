@@ -8,6 +8,7 @@ import android.graphics.Typeface
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
@@ -20,9 +21,18 @@ class OverlayView(context: Context) : FrameLayout(context) {
     private val code = text(44f, Gravity.CENTER).apply { typeface = Typeface.MONOSPACE; visibility = GONE }
     private val hint = text(14f, Gravity.CENTER or Gravity.BOTTOM).apply { visibility = GONE }
     private val warning = text(14f, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { visibility = GONE }
+    /**
+     * Debug stats sit directly above the info line in one column. They used to be pinned to
+     * opposite bottom corners, and on a 480 px panel both lines are wider than half the screen,
+     * so they were drawn over each other and neither was readable.
+     */
+    private val bottomStack = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        this@OverlayView.addView(this, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START))
+    }
+    private val debug = text(11f, Gravity.START, bottomStack).apply { typeface = Typeface.MONOSPACE; visibility = GONE }
     /** Always visible: proves the app is alive and carries the facts the M0 audit needs. */
-    private val info = text(10f, Gravity.BOTTOM or Gravity.START)
-    private val debug = text(11f, Gravity.BOTTOM or Gravity.END).apply { typeface = Typeface.MONOSPACE; visibility = GONE }
+    private val info = text(10f, Gravity.START, bottomStack)
     private val indicator = View(context).apply { setBackgroundColor(Color.WHITE); visibility = GONE }
     private val cursor = CursorView(context).apply { visibility = GONE }
 
@@ -70,10 +80,16 @@ class OverlayView(context: Context) : FrameLayout(context) {
         }
     }
 
-    private fun text(sizeSp: Float, gravity: Int) = TextView(context).apply {
+    private fun text(sizeSp: Float, gravity: Int, column: LinearLayout? = null) = TextView(context).apply {
         setTextColor(Color.WHITE); textSize = sizeSp; setShadowLayer(4f, 0f, 0f, Color.BLACK)
-        setPadding(12, 12, 12, 12)
-        addView(this, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, gravity))
+        if (column == null) {
+            setPadding(12, 12, 12, 12)
+            this@OverlayView.addView(this, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, gravity))
+        } else {
+            setPadding(12, 2, 12, 2)
+            this.gravity = gravity
+            column.addView(this, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        }
     }
 
     private companion object { const val CURSOR_SIZE = 36 }

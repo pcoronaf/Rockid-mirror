@@ -75,6 +75,8 @@ class ReceiverTransport(
         const val TAG = "Transport"
         /** Concurrent unauthenticated handshakes tolerated before new ones are refused. */
         const val MAX_HANDSHAKES = 3
+        /** At most one failure report to the phone per interval, however often it recurs. */
+        const val FAILURE_REPORT_INTERVAL_NS = 3_000_000_000L
     }
 
     private var server: ServerSocket? = null
@@ -152,7 +154,15 @@ class ReceiverTransport(
             val now = clockNs()
             val conn = connection.get() ?: continue
             if (packet.address != conn.peerAddress) continue // only the authenticated sender's host
-            conn.onDatagram(buf, packet.length, now)
+            // One frame that fails to decode must not end video for the rest of the session: an
+            // unguarded throw here killed this thread on the first frame, leaving the glasses
+            // showing "packets 1 · decoded 0" with nothing ever drawn again.
+            try {
+                conn.onDatagram(buf, packet.length, now)
+            } catch (e: Throwable) {
+                if (e is VirtualMachineError && e !is StackOverflowError) throw e
+                conn.reportFailure("video", e)
+            }
         }
     }
 
@@ -179,10 +189,13 @@ class ReceiverTransport(
             } catch (e: MirrorException) {
                 ReceiverLog.w(TAG, "session_ended", "code" to e.code, "details" to e.details)
                 if (e.code == ErrorCode.PAIRING_FAILED || e.code == ErrorCode.AUTHENTICATION_FAILED) listener.onPairingFailed(e.details ?: e.code.name)
+                tellPhoneBeforeClosing(e.details ?: e.code.name)
                 close(e.details ?: e.code.name)
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 if (!closed.get()) ReceiverLog.w(TAG, "session_error", "error" to e.message)
-                close(e.message ?: "error")
+                val reason = "${e.javaClass.simpleName}: ${e.message ?: "error"}"
+                tellPhoneBeforeClosing(reason)
+                close(reason)
             } finally {
                 if (!handshakeDone) handshaking.decrementAndGet()
             }
@@ -230,19 +243,44 @@ class ReceiverTransport(
             while (!closed.get()) {
                 val raw = try { Framing.read(input) } catch (e: java.net.SocketTimeoutException) { throw MirrorException(ErrorCode.NETWORK_LOST, "control timeout") }
                     ?: throw MirrorException(ErrorCode.NETWORK_LOST, "sender closed the connection")
+                // Framing and decryption failures stay fatal: the stream is desynchronised.
                 val msg = ControlCodec.decode(cipher!!.open(raw))
-                when (msg.type) {
-                    MessageType.PING -> { val p = ControlCodec.payloadOf(msg, Payloads.Ping.serializer()); send(MessageType.PONG, Payloads.Pong.serializer(), Payloads.Pong(p.sentNs, clockNs())) }
-                    MessageType.PONG -> { val p = ControlCodec.payloadOf(msg, Payloads.Pong.serializer()); clockSync.onPong(p.sentNs, p.receiverNs, clockNs()) }
-                    MessageType.GOODBYE -> throw MirrorException(ErrorCode.NETWORK_LOST, "sender said goodbye")
-                    MessageType.STREAM_START -> {
-                        val s = ControlCodec.payloadOf(msg, Payloads.StreamStart.serializer())
-                        bindVideo(s.sessionShortId)
-                        listener.onControlMessage(msg)
+                if (msg.type == MessageType.GOODBYE) throw MirrorException(ErrorCode.NETWORK_LOST, "sender said goodbye")
+                // Acting on a message is not. A handler that throws (decoder reconfiguration on a
+                // stream start or resolution change, a malformed payload) used to end the whole
+                // session here, which the phone could only report as "receiver closed the
+                // connection". Report the cause and keep the link.
+                try {
+                    when (msg.type) {
+                        MessageType.PING -> { val p = ControlCodec.payloadOf(msg, Payloads.Ping.serializer()); send(MessageType.PONG, Payloads.Pong.serializer(), Payloads.Pong(p.sentNs, clockNs())) }
+                        MessageType.PONG -> { val p = ControlCodec.payloadOf(msg, Payloads.Pong.serializer()); clockSync.onPong(p.sentNs, p.receiverNs, clockNs()) }
+                        MessageType.STREAM_START -> {
+                            val s = ControlCodec.payloadOf(msg, Payloads.StreamStart.serializer())
+                            bindVideo(s.sessionShortId)
+                            listener.onControlMessage(msg)
+                        }
+                        else -> listener.onControlMessage(msg)
                     }
-                    else -> listener.onControlMessage(msg)
+                } catch (e: Throwable) {
+                    if (e is VirtualMachineError && e !is StackOverflowError) throw e
+                    reportFailure(msg.type.name, e)
                 }
             }
+        }
+
+        private var lastFailureReportNs = 0L
+
+        /**
+         * Logs a non-fatal failure and tells the phone what it was, so its event log names the
+         * real cause. Rate-limited: a failure on every video frame must not flood the control link.
+         */
+        fun reportFailure(where: String, e: Throwable) {
+            val text = "$where: ${e.javaClass.simpleName}: ${e.message ?: "no message"}".take(300)
+            ReceiverLog.w(TAG, "handler_failed", "where" to where, "error" to text)
+            val now = clockNs()
+            if (now - lastFailureReportNs < FAILURE_REPORT_INTERVAL_NS) return
+            lastFailureReportNs = now
+            send(MessageType.ERROR, Payloads.Error.serializer(), Payloads.Error(ErrorCode.UNKNOWN.name, text, true))
         }
 
         fun bindVideo(sessionShortId: Long) {
@@ -282,6 +320,16 @@ class ReceiverTransport(
         }
 
         private fun writeRaw(bytes: ByteArray) = synchronized(writeLock) { Framing.write(output, bytes) }
+
+        /**
+         * Best effort: name the reason to the phone before hanging up, so it shows more than
+         * "receiver closed the connection". Skipped when the session never got its keys, or
+         * when the socket itself is what failed (the send then just fails quietly).
+         */
+        private fun tellPhoneBeforeClosing(reason: String) {
+            if (!handshakeDone || closed.get()) return
+            runCatching { send(MessageType.ERROR, Payloads.Error.serializer(), Payloads.Error(ErrorCode.NETWORK_LOST.name, "glasses closing the link: ${reason.take(240)}", true)) }
+        }
 
         fun close(reason: String) {
             if (closed.getAndSet(true)) return

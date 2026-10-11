@@ -365,10 +365,21 @@ class ReceiverSession(
         requestKeyframe("decoder (re)configured")
     }
 
+    /** Set while a reconfigure triggered by a decoder error is in progress. */
+    private var reconfiguringAfterError = false
+
     fun onDecoderError(message: String) {
         overlay.setWarning("Decoder error: $message")
         transport.sendError(ErrorCode.DECODER_FAILED, message)
-        streamFormat?.let { onStreamFormat(it) } // try to reconfigure once
+        // Try to reconfigure once. A failed configure reports through this same callback, so
+        // without the guard a decoder that keeps refusing recursed until the stack overflowed.
+        if (reconfiguringAfterError) return
+        reconfiguringAfterError = true
+        try {
+            streamFormat?.let { onStreamFormat(it) }
+        } finally {
+            reconfiguringAfterError = false
+        }
     }
 
     // ---- input -------------------------------------------------------------------------------
