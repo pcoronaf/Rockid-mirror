@@ -447,13 +447,25 @@ class MirrorSession(private val context: Context, private val container: AppCont
         return "$chain @ $at".take(400)
     }
 
+    /**
+     * Starts computer mode on the session's own background scope. The UI must not call
+     * [startComputerStreaming] from its main-thread scope: sending STREAM_START does a blocking
+     * socket write, which throws NetworkOnMainThreadException on the main thread.
+     */
+    fun requestStartComputer(app: LaunchableApp, width: Int, height: Int, dpi: Int) {
+        scope.launch { runCatching { startComputerStreaming(app, width, height, dpi) } }
+    }
+
     /** Launches another app onto the running computer display without restarting the stream. */
     fun launchOnComputer(app: LaunchableApp) {
         val control = computer ?: run { event("Computer mode is not running"); return }
         val component = context.packageManager.getLaunchIntentForPackage(app.packageName)?.component?.flattenToString()
             ?: run { event("${app.label} has no launchable activity"); return }
-        if (control.launch(component)) event("Opened ${app.label}") else event("${app.label} did not open")
-        encoder.requestKeyFrame()
+        // Launch runs a shell command through a blocking Binder call; keep it off the caller thread.
+        scope.launch {
+            if (control.launch(component)) event("Opened ${app.label}") else event("${app.label} did not open")
+            encoder.requestKeyFrame()
+        }
     }
 
     private fun clearComputer() {
@@ -917,13 +929,17 @@ class MirrorSession(private val context: Context, private val container: AppCont
         val computer = this.computer
         if (isComputer && computer != null) {
             val p = pointer.position
-            when (what) {
-                "tap" -> computer.tapAt(p.x, p.y)
-                "long press" -> computer.longPressAt(p.x, p.y)
-                "back" -> computer.back()
-                "home" -> computer.home()
-                "recents" -> computer.key(KEYCODE_APP_SWITCH)
-                else -> lastScroll?.let { (dx, dy) -> computer.scrollFrom(p.x, p.y, dx, dy) }
+            val scroll = lastScroll
+            // Injection runs a shell command over a blocking Binder call; never on the caller thread.
+            scope.launch {
+                when (what) {
+                    "tap" -> computer.tapAt(p.x, p.y)
+                    "long press" -> computer.longPressAt(p.x, p.y)
+                    "back" -> computer.back()
+                    "home" -> computer.home()
+                    "recents" -> computer.key(KEYCODE_APP_SWITCH)
+                    else -> scroll?.let { (dx, dy) -> computer.scrollFrom(p.x, p.y, dx, dy) }
+                }
             }
             encoder.requestKeyFrame()
             return

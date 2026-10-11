@@ -534,11 +534,10 @@ private fun ComputerModeCard(session: MirrorSession, canStart: Boolean) {
             apps = remember { session.launchableApps() },
             onPick = { app ->
                 showApps = false
-                if (session.isComputerActive) {
-                    session.launchOnComputer(app)
-                } else {
-                    scope.launch { runCatching { session.startComputerStreaming(app, 480, 640, 240) } }
-                }
+                // Both run off the main thread inside the session: starting sends STREAM_START
+                // (a blocking socket write) and launching runs a shell command over Binder.
+                if (session.isComputerActive) session.launchOnComputer(app)
+                else session.requestStartComputer(app, 480, 640, 240)
             },
             onDismiss = { showApps = false },
         )
