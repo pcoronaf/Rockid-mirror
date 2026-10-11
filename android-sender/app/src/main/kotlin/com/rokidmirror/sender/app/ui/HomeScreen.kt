@@ -66,6 +66,7 @@ import com.rokidmirror.sender.app.PointerService
 import com.rokidmirror.sender.app.session.SyntheticPattern
 import com.rokidmirror.sender.capture.CaptureMode
 import com.rokidmirror.sender.capture.LaunchableApp
+import com.rokidmirror.sender.computer.ComputerKeys
 import com.rokidmirror.sender.control.ProfileRepository
 import com.rokidmirror.sender.control.SenderState
 import com.rokidmirror.sender.control.ViewProfile
@@ -527,6 +528,7 @@ private fun ComputerModeCard(session: MirrorSession, canStart: Boolean) {
                 if (!canStart && !session.isComputerActive) {
                     Text("Connect to the glasses first, then start computer mode.", style = MaterialTheme.typography.bodySmall)
                 }
+                if (session.isComputerActive) ComputerKeyboard(session)
             }
         }
     }
@@ -580,4 +582,46 @@ private fun DeepBlackCard(session: MirrorSession) {
             }
         }
     }
+}
+
+/**
+ * Typing for computer mode. You type on the phone's own keyboard, which you can see, and the text
+ * goes to whatever has focus on the glasses — rather than hunting for keys on a pad you cannot
+ * look at while wearing them. The row underneath carries the keys that are not text.
+ */
+@Composable
+private fun ComputerKeyboard(session: MirrorSession) {
+    var draft by remember { mutableStateOf("") }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                label = { Text("Type for the glasses") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            Button(
+                enabled = draft.isNotBlank(),
+                onClick = { session.typeOnComputer(draft); draft = "" },
+            ) { Text("Send") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            KeyButton("⏎", ComputerKeys.ENTER, session, Modifier.weight(1f))
+            KeyButton("⌫", ComputerKeys.DEL, session, Modifier.weight(1f))
+            KeyButton("Tab", ComputerKeys.TAB, session, Modifier.weight(1f))
+            KeyButton("Esc", ComputerKeys.ESCAPE, session, Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            KeyButton("←", ComputerKeys.DPAD_LEFT, session, Modifier.weight(1f))
+            KeyButton("↑", ComputerKeys.DPAD_UP, session, Modifier.weight(1f))
+            KeyButton("↓", ComputerKeys.DPAD_DOWN, session, Modifier.weight(1f))
+            KeyButton("→", ComputerKeys.DPAD_RIGHT, session, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun KeyButton(label: String, keyCode: Int, session: MirrorSession, modifier: Modifier = Modifier) {
+    OutlinedButton(onClick = { session.keyOnComputer(keyCode) }, modifier = modifier) { Text(label) }
 }

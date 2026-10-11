@@ -23,6 +23,14 @@ class ComputerCommandsTest {
         assertEquals(listOf("input", "-d", "3", "keyevent", "4"), ComputerCommands.key(3, 4).toList())
     }
 
+    @Test fun typingPassesTheTextAsOneArgument() {
+        // One argv element, so the shell never splits it and `input text` needs no %s escaping.
+        assertEquals(
+            listOf("input", "-d", "5", "text", "hello world & more"),
+            ComputerCommands.text(5, "hello world & more").toList(),
+        )
+    }
+
     @Test fun homeLaunchesTheHomeCategory() {
         val args = ComputerCommands.home(2).toList()
         assertTrue(args.containsAll(listOf("--display", "2", "android.intent.category.HOME")))

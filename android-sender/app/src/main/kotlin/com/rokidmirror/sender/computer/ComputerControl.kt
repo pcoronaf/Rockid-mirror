@@ -3,6 +3,20 @@ package com.rokidmirror.sender.computer
 import com.rokidmirror.sender.privilege.ShellBridge
 import com.rokidmirror.sender.telemetry.MirrorLog
 
+/** Android key codes computer mode sends, so the session and the UI cannot disagree on them. */
+object ComputerKeys {
+    const val BACK = 4
+    const val DPAD_UP = 19
+    const val DPAD_DOWN = 20
+    const val DPAD_LEFT = 21
+    const val DPAD_RIGHT = 22
+    const val TAB = 61
+    const val ENTER = 66
+    const val DEL = 67
+    const val ESCAPE = 111
+    const val APP_SWITCH = 187
+}
+
 /** Pure argument builders for the shell commands computer mode runs; unit-tested off-device. */
 object ComputerCommands {
     const val LONG_PRESS_MS = 600
@@ -22,6 +36,14 @@ object ComputerCommands {
 
     fun key(displayId: Int, keyCode: Int): Array<String> =
         arrayOf("input", "-d", displayId.toString(), "keyevent", keyCode.toString())
+
+    /**
+     * Types a whole string in one go. The argument vector is handed to the process directly, with
+     * no shell in between, so spaces and punctuation survive without the %s escaping the `input`
+     * command needs when a shell splits the line.
+     */
+    fun text(displayId: Int, value: String): Array<String> =
+        arrayOf("input", "-d", displayId.toString(), "text", value)
 }
 
 /**
@@ -34,7 +56,6 @@ object ComputerCommands {
 class ComputerControl(val displayId: Int, val width: Int, val height: Int) {
     private companion object {
         const val TAG = "ComputerControl"
-        const val KEYCODE_BACK = 4
     }
 
     private fun run(args: Array<String>): Boolean {
@@ -45,7 +66,7 @@ class ComputerControl(val displayId: Int, val width: Int, val height: Int) {
 
     fun launch(componentFlattened: String): Boolean = run(ComputerCommands.launch(displayId, componentFlattened))
     fun home(): Boolean = run(ComputerCommands.home(displayId))
-    fun back(): Boolean = run(ComputerCommands.key(displayId, KEYCODE_BACK))
+    fun back(): Boolean = run(ComputerCommands.key(displayId, ComputerKeys.BACK))
 
     fun tapAt(normalizedX: Float, normalizedY: Float): Boolean {
         val (x, y) = pixels(normalizedX, normalizedY)
@@ -66,6 +87,8 @@ class ComputerControl(val displayId: Int, val width: Int, val height: Int) {
     }
 
     fun key(keyCode: Int): Boolean = run(ComputerCommands.key(displayId, keyCode))
+
+    fun type(value: String): Boolean = value.isNotEmpty() && run(ComputerCommands.text(displayId, value))
 
     private fun pixels(nx: Float, ny: Float): Pair<Int, Int> =
         (nx.coerceIn(0f, 1f) * (width - 1)).toInt() to (ny.coerceIn(0f, 1f) * (height - 1)).toInt()

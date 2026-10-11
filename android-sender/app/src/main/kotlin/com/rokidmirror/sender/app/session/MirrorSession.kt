@@ -28,6 +28,7 @@ import com.rokidmirror.sender.capture.ExtendedDisplayController
 import com.rokidmirror.sender.capture.LaunchableApp
 import com.rokidmirror.sender.capture.MediaProjectionCaptureController
 import com.rokidmirror.sender.computer.ComputerControl
+import com.rokidmirror.sender.computer.ComputerKeys
 import com.rokidmirror.sender.computer.ComputerDisplayController
 import com.rokidmirror.sender.privilege.ShellBridge
 import com.rokidmirror.sender.privilege.WirelessDebug
@@ -80,7 +81,6 @@ class MirrorSession(private val context: Context, private val container: AppCont
         const val TAG = "Session"
         const val RECONNECT_WINDOW_MS = 60_000L
         const val VIEWPORT_SEND_INTERVAL_MS = 40L
-        const val KEYCODE_APP_SWITCH = 187
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -467,6 +467,25 @@ class MirrorSession(private val context: Context, private val container: AppCont
      */
     fun requestStartComputer(app: LaunchableApp, width: Int, height: Int, dpi: Int) {
         scope.launch { runCatching { startComputerStreaming(app, width, height, dpi) } }
+    }
+
+    /**
+     * Types into whatever has focus on the computer display. You type on the phone's own keyboard,
+     * which you can see and already know, rather than hunting for keys on a pad you cannot look at.
+     */
+    fun typeOnComputer(text: String) {
+        val control = computer ?: run { event("Computer mode is not running"); return }
+        if (text.isEmpty()) return
+        scope.launch {
+            if (!control.type(text)) event("Could not type on the computer display")
+            encoder.requestKeyFrame()
+        }
+    }
+
+    /** Sends one key (Enter, Backspace, an arrow, …) to the computer display. */
+    fun keyOnComputer(keyCode: Int) {
+        val control = computer ?: run { event("Computer mode is not running"); return }
+        scope.launch { control.key(keyCode); encoder.requestKeyFrame() }
     }
 
     /** Launches another app onto the running computer display without restarting the stream. */
@@ -1024,7 +1043,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
                     "long press" -> computer.longPressAt(p.x, p.y)
                     "back" -> computer.back()
                     "home" -> computer.home()
-                    "recents" -> computer.key(KEYCODE_APP_SWITCH)
+                    "recents" -> computer.key(ComputerKeys.APP_SWITCH)
                     else -> scroll?.let { (dx, dy) -> computer.scrollFrom(p.x, p.y, dx, dy) }
                 }
             }
