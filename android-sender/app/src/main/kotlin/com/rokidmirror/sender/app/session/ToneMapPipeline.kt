@@ -37,8 +37,8 @@ import java.util.concurrent.CountDownLatch
  */
 class ToneMapPipeline(
     output: Surface,
-    private val width: Int,
-    private val height: Int,
+    private var width: Int,
+    private var height: Int,
 ) {
     private companion object {
         const val TAG = "ToneMap"
@@ -79,6 +79,7 @@ class ToneMapPipeline(
     private var display: EGLDisplay = EGL14.EGL_NO_DISPLAY
     private var context: EGLContext = EGL14.EGL_NO_CONTEXT
     private var eglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
+    private var eglConfig: EGLConfig? = null
     private var program = 0
     private var textureId = 0
     private var surfaceTexture: SurfaceTexture? = null
@@ -138,6 +139,36 @@ class ToneMapPipeline(
         black = blackPoint.coerceIn(0f, 0.9f)
         white = whitePoint.coerceIn(black + 0.05f, 1f)
         gamma = gammaValue.coerceIn(0.4f, 2.5f)
+    }
+
+    /**
+     * Points the pass at a new encoder surface after an encoder restart, keeping the GL context
+     * and — crucially — the same [inputSurface]. The capture keeps rendering into the surface it
+     * already has, so nothing it depends on is ever released underneath it.
+     */
+    fun setOutput(output: Surface, newWidth: Int, newHeight: Int) {
+        if (released) return
+        val done = CountDownLatch(1)
+        var failure: Throwable? = null
+        handler.post {
+            try {
+                EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
+                if (eglSurface != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(display, eglSurface)
+                eglSurface = EGL14.eglCreateWindowSurface(display, eglConfig, output, intArrayOf(EGL14.EGL_NONE), 0)
+                check(eglSurface != EGL14.EGL_NO_SURFACE) { "eglCreateWindowSurface failed (0x${EGL14.eglGetError().toString(16)})" }
+                check(EGL14.eglMakeCurrent(display, eglSurface, eglSurface, context)) { "eglMakeCurrent failed" }
+                width = newWidth
+                height = newHeight
+                surfaceTexture?.setDefaultBufferSize(newWidth, newHeight)
+            } catch (e: Throwable) {
+                failure = e
+            } finally {
+                done.countDown()
+            }
+        }
+        done.await()
+        failure?.let { throw MirrorException(ErrorCode.RENDERER_FAILED, "tone mapping retarget failed: ${it.message}", it) }
+        MirrorLog.i(TAG, "tonemap_retargeted", "w" to newWidth, "h" to newHeight)
     }
 
     fun release() {
@@ -223,6 +254,7 @@ class ToneMapPipeline(
         val configs = arrayOfNulls<EGLConfig>(1)
         val count = IntArray(1)
         check(EGL14.eglChooseConfig(display, attributes, 0, configs, 0, 1, count, 0) && count[0] > 0) { "no recordable EGL config" }
+        eglConfig = configs[0]
         context = EGL14.eglCreateContext(display, configs[0], EGL14.EGL_NO_CONTEXT, intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE), 0)
         check(context != EGL14.EGL_NO_CONTEXT) { "eglCreateContext failed" }
         eglSurface = EGL14.eglCreateWindowSurface(display, configs[0], output, intArrayOf(EGL14.EGL_NONE), 0)

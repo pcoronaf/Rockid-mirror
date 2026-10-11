@@ -132,6 +132,7 @@ class MirrorSession(private val context: Context, private val container: AppCont
      * GPU pass per frame. Synthetic patterns skip it: they already draw through their own EGL.
      */
     private var toneMap: ToneMapPipeline? = null
+    private var retiredToneMap: ToneMapPipeline? = null
     private val _deepBlack = MutableStateFlow(false)
     val deepBlack: StateFlow<Boolean> = _deepBlack.asStateFlow()
     private val _blackLevel = MutableStateFlow(0.12f)
@@ -492,7 +493,9 @@ class MirrorSession(private val context: Context, private val container: AppCont
      * enabling deep black can never cost you the stream.
      */
     private fun captureTarget(encoderSurface: Surface, width: Int, height: Int): Surface {
-        val previous = toneMap
+        // Held, not released: the capture is still drawing into the old pass's surface until the
+        // caller hands it the new one. Freeing it here killed the virtual display.
+        retiredToneMap = toneMap
         toneMap = null
         val target = if (!_deepBlack.value) {
             encoderSurface
@@ -506,14 +509,19 @@ class MirrorSession(private val context: Context, private val container: AppCont
                 encoderSurface
             }
         }
-        // The previous pass drew into the old encoder surface, which has already been replaced.
-        previous?.release()
         return target
+    }
+
+    /** Frees the pass the capture has just been moved off; safe once the new surface is in place. */
+    private fun releaseRetiredToneMap() {
+        retiredToneMap?.release()
+        retiredToneMap = null
     }
 
     private fun releaseToneMap() {
         toneMap?.release()
         toneMap = null
+        releaseRetiredToneMap()
     }
 
     /** Turns the deep-black pass on or off, restarting the encoder so it takes effect at once. */
@@ -642,12 +650,29 @@ class MirrorSession(private val context: Context, private val container: AppCont
     private suspend fun restartEncoder(newConfig: EncoderConfig) {
         val surface = encoder.reconfigure(newConfig)
         encoderConfig = newConfig
-        if (isExtended) {
+        // With deep black on, retarget the existing pass rather than building a new one: the
+        // capture keeps the input surface it already holds. Rebuilding meant releasing the surface
+        // the virtual display was still drawing into, which killed mirroring on the first encoder
+        // restart — about 20 s in, when the controller first relaxes resolution or frame rate.
+        val tone = toneMap
+        if (tone != null && _deepBlack.value && !isSynthetic) {
+            if (isExtended) extended.resize(newConfig.width, newConfig.height, sourceGeometry?.densityDpi ?: 240)
+            else capture.resize(newConfig.width, newConfig.height, sourceGeometry?.densityDpi ?: 320)
+            runCatching { tone.setOutput(surface, newConfig.width, newConfig.height) }.onFailure {
+                // Fall back to encoding straight from the capture rather than losing the stream.
+                event("Deep black stopped (${it.message}); continuing without it")
+                releaseToneMap()
+                _deepBlack.value = false
+                if (isExtended) extended.setSurface(surface) else capture.setSurface(surface)
+            }
+        } else if (isExtended) {
             extended.resize(newConfig.width, newConfig.height, sourceGeometry?.densityDpi ?: 240)
             extended.setSurface(captureTarget(surface, newConfig.width, newConfig.height))
+            releaseRetiredToneMap()
         } else if (!isSynthetic) {
             capture.resize(newConfig.width, newConfig.height, sourceGeometry?.densityDpi ?: 320)
             capture.setSurface(captureTarget(surface, newConfig.width, newConfig.height))
+            releaseRetiredToneMap()
         } else {
             synthetic?.stop()
             synthetic = SyntheticSource(surface, newConfig.width, newConfig.height, newConfig.fps, syntheticPattern).also { it.start() }
