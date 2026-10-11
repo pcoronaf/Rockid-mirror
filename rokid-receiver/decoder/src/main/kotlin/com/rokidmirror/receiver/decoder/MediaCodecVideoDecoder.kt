@@ -54,6 +54,12 @@ class MediaCodecVideoDecoder(
             format.csd0?.let { setByteBuffer("csd-0", ByteBuffer.wrap(it)) }
             format.csd1?.let { setByteBuffer("csd-1", ByteBuffer.wrap(it)) }
             setInteger(MediaFormat.KEY_PRIORITY, 0)
+            // Match the sender's full-range signalling so black stays luma 0 instead of being
+            // expanded from limited range into a faintly lit grey that this panel dithers.
+            // The minimal-format retry below drops these if the decoder rejects them.
+            setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_FULL)
+            setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709)
+            setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
             setInteger(MediaFormat.KEY_MAX_WIDTH, maxOf(format.width, 1280))
             setInteger(MediaFormat.KEY_MAX_HEIGHT, maxOf(format.height, 1280))

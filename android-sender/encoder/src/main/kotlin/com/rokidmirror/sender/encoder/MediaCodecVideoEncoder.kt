@@ -109,6 +109,14 @@ class MediaCodecVideoEncoder(
             setInteger(KEY_MAX_B_FRAMES, 0)
             setFloat(KEY_MAX_FPS_TO_ENCODER, config.fps.toFloat())
             setInteger(MediaFormat.KEY_LATENCY, 1)
+            // Encode black as luma 0 rather than the 16 of limited-range video. The glasses' green
+            // monochrome panel drives brightness from luma, so a limited-range black arrives as a
+            // faintly lit grey that the panel dithers — the "sand" on dark backgrounds. Signalling
+            // full range on both ends makes black switch the pixels off. Dropped on the retry below
+            // if the encoder rejects it.
+            setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_FULL)
+            setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709)
+            setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
             if (probe.supportsCbr) setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
             if (config.lowLatency && probe.supportsLowLatency && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
@@ -132,7 +140,10 @@ class MediaCodecVideoEncoder(
             // Retry once without the optional profile/level hints that some encoders reject.
             runCatching { c.reset() }
             try {
-                format.apply { removeKey(MediaFormat.KEY_PROFILE); removeKey(MediaFormat.KEY_LEVEL); removeKey(MediaFormat.KEY_LATENCY) }
+                format.apply {
+                    removeKey(MediaFormat.KEY_PROFILE); removeKey(MediaFormat.KEY_LEVEL); removeKey(MediaFormat.KEY_LATENCY)
+                    removeKey(MediaFormat.KEY_COLOR_RANGE); removeKey(MediaFormat.KEY_COLOR_STANDARD); removeKey(MediaFormat.KEY_COLOR_TRANSFER)
+                }
                 c.setCallback(callback, handler)
                 c.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             } catch (e2: Exception) {
