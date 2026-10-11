@@ -57,6 +57,17 @@ class AdaptiveController(
         const val ENCODE_LATENCY_STRESS_MS = 40f
         const val DECODE_LAG_STRESS_FRAMES = 3
         const val MAX_RESOLUTION_STEP = 2
+        /**
+         * Frame-rate and resolution changes restart the encoder (a visible hitch plus a keyframe),
+         * so they must not flap. These gate how many consecutive calm periods are required before
+         * recovery relaxes fps/resolution by one notch. The requirement doubles each time a relax
+         * is quickly punished, so a link that cannot hold 60 fps / full resolution settles on the
+         * lower shape instead of saw-toothing. Bitrate (changed in place, no restart) stays nimble.
+         */
+        const val BASE_SHAPE_PROBE = 12
+        const val MAX_SHAPE_PROBE = 120
+        /** A relapse within this many periods of a relax means that relax was premature. */
+        const val SHAPE_RELAPSE_WINDOW = 8
     }
 
     var level = AdaptiveLevel(maxBitrate, maxFps, 0); private set
@@ -71,6 +82,11 @@ class AdaptiveController(
     private var stableSinceCeilingRaise = 0
     private var lastKeyframeRequestPeriod = -10
     private var period = 0
+    /** Calm periods since the last fps/resolution change, counted separately from bitrate upgrades. */
+    private var stableForShape = 0
+    private var fpsProbeBackoff = BASE_SHAPE_PROBE
+    private var resProbeBackoff = BASE_SHAPE_PROBE
+    private var lastShapeRelaxPeriod = -1000
 
     fun reset(startBitrate: Int, fps: Int) {
         level = AdaptiveLevel(startBitrate.coerceIn(minBitrate, maxBitrate), fps, 0)
@@ -81,6 +97,10 @@ class AdaptiveController(
         holdPeriods = 0
         ceiling = maxBitrate
         stableSinceCeilingRaise = 0
+        stableForShape = 0
+        fpsProbeBackoff = BASE_SHAPE_PROBE
+        resProbeBackoff = BASE_SHAPE_PROBE
+        lastShapeRelaxPeriod = -1000
     }
 
     /** Called once per period; returns at most one action so changes stay observable. */
@@ -124,6 +144,7 @@ class AdaptiveController(
 
         if (stressed) {
             stableCount = 0
+            stableForShape = 0
             stressCount++
             // Hysteresis: one bad sample is not a trend. Reacting to every blip walked the
             // stream down to an unusable bitrate and resolution and never recovered.
@@ -142,6 +163,7 @@ class AdaptiveController(
         }
         stressCount = 0
         stableCount++
+        stableForShape++
         if (stableCount >= stableIntervalsBeforeUpgrade) {
             stableCount = 0
             return upgrade()
@@ -156,11 +178,18 @@ class AdaptiveController(
             level = level.copy(bitrate = next)
             return AdaptiveAction.SetBitrate(next)
         }
+        // A relapse soon after relaxing fps/resolution means that relax was premature: back off so
+        // the controller stops probing that shape back up and settles on what the link can hold.
+        val relapse = period - lastShapeRelaxPeriod <= SHAPE_RELAPSE_WINDOW
         if (level.fps > 30) {
+            if (relapse) fpsProbeBackoff = (fpsProbeBackoff * 2).coerceAtMost(MAX_SHAPE_PROBE)
+            stableForShape = 0
             level = level.copy(fps = 30)
             return AdaptiveAction.SetFps(30)
         }
         if (level.resolutionStep < MAX_RESOLUTION_STEP) {
+            if (relapse) resProbeBackoff = (resProbeBackoff * 2).coerceAtMost(MAX_SHAPE_PROBE)
+            stableForShape = 0
             level = level.copy(resolutionStep = level.resolutionStep + 1)
             return AdaptiveAction.SetResolutionStep(level.resolutionStep)
         }
@@ -191,11 +220,18 @@ class AdaptiveController(
             level = level.copy(bitrate = next)
             return AdaptiveAction.SetBitrate(next)
         }
-        if (level.resolutionStep > 0) {
+        // Resolution and frame rate come back only after a long calm stretch, and each relax resets
+        // that stretch, so recovering both takes two separate quiet periods rather than one burst of
+        // encoder restarts. The required stretch grows (above) whenever a relax is quickly punished.
+        if (level.resolutionStep > 0 && stableForShape >= resProbeBackoff) {
+            stableForShape = 0
+            lastShapeRelaxPeriod = period
             level = level.copy(resolutionStep = level.resolutionStep - 1)
             return AdaptiveAction.SetResolutionStep(level.resolutionStep)
         }
-        if (level.fps < maxFps) {
+        if (level.fps < maxFps && stableForShape >= fpsProbeBackoff) {
+            stableForShape = 0
+            lastShapeRelaxPeriod = period
             level = level.copy(fps = maxFps)
             return AdaptiveAction.SetFps(maxFps)
         }

@@ -142,6 +142,20 @@ class AdaptiveControllerTest {
     }
 
     @Test
+    fun frameRateDoesNotFlapOnALinkThatCannotHoldIt() {
+        // A link that is fine at 30 fps but overloads whenever the controller probes back to 60.
+        // The old controller restored 60 fps on every recovery and got punished again, restarting
+        // the encoder each time; the backoff must make it settle on 30 instead of saw-toothing.
+        val c = ctl()
+        var fpsRestores = 0
+        repeat(500) {
+            val input = if (c.level.fps > 30) backpressure else calm
+            if (c.evaluate(input) is AdaptiveAction.SetFps && c.level.fps == 60) fpsRestores++
+        }
+        assertTrue("frame rate flapped $fpsRestores times; backoff should keep it to a few probes", fpsRestores <= 6)
+    }
+
+    @Test
     fun latencyTrackerComputesWindowMetrics() {
         val t = LatencyTracker()
         var now = 1_000_000_000L
