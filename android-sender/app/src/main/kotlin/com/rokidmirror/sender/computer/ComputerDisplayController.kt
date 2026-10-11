@@ -81,20 +81,33 @@ class ComputerDisplayController {
         val builderClass = Class.forName(CONFIG_BUILDER)
         val callbackClass = Class.forName(CALLBACK)
 
-        val createMethod = service.javaClass.methods.singleOrNull { m ->
-            m.name == "createVirtualDisplay" &&
-                m.parameterTypes.any { configClass.isAssignableFrom(it) } &&
+        // Look the methods up on the IDisplayManager interface (not the proxy instance's class):
+        // there can be several createVirtualDisplay overloads, so pick the richest one that takes
+        // a VirtualDisplayConfig and a callback, preferring an int return. Methods from the
+        // interface still invoke on the asInterface proxy, which implements it.
+        val mgrClass = Class.forName(MANAGER_INTERFACE)
+        fun named(name: String) = mgrClass.methods.filter { it.name == name }
+        val createCandidates = named("createVirtualDisplay").filter { m ->
+            m.parameterTypes.any { configClass.isAssignableFrom(it) } &&
                 m.parameterTypes.any { callbackClass.isAssignableFrom(it) }
-        } ?: error("this Android build has no compatible createVirtualDisplay")
-        val releaseMethod = service.javaClass.methods.single { m ->
-            m.name == "releaseVirtualDisplay" && m.parameterTypes.size == 1 &&
-                m.parameterTypes[0].isAssignableFrom(callbackClass)
         }
-        val resizeMethod = service.javaClass.methods.firstOrNull { m ->
-            m.name == "resizeVirtualDisplay" && m.parameterTypes.firstOrNull()?.isAssignableFrom(callbackClass) == true
+        val createMethod = (createCandidates.filter { it.returnType == Int::class.javaPrimitiveType }
+            .ifEmpty { createCandidates })
+            .maxByOrNull { it.parameterTypes.size }
+            ?: run {
+                val seen = named("createVirtualDisplay").joinToString("; ") { m ->
+                    "${m.returnType.simpleName}(${m.parameterTypes.joinToString(",") { it.simpleName }})"
+                }
+                error("no createVirtualDisplay(config,callback) on $MANAGER_INTERFACE; saw: ${seen.ifEmpty { "none" }}")
+            }
+        val releaseMethod = named("releaseVirtualDisplay").firstOrNull { m ->
+            m.parameterTypes.size == 1 && m.parameterTypes[0].isAssignableFrom(callbackClass)
+        } ?: error("no releaseVirtualDisplay(callback) on $MANAGER_INTERFACE")
+        val resizeMethod = named("resizeVirtualDisplay").firstOrNull { m ->
+            m.parameterTypes.firstOrNull()?.isAssignableFrom(callbackClass) == true
         }
-        val setSurfaceMethod = service.javaClass.methods.firstOrNull { m ->
-            m.name == "setVirtualDisplaySurface" && m.parameterTypes.firstOrNull()?.isAssignableFrom(callbackClass) == true
+        val setSurfaceMethod = named("setVirtualDisplaySurface").firstOrNull { m ->
+            m.parameterTypes.firstOrNull()?.isAssignableFrom(callbackClass) == true
         }
 
         val builderCtor = builderClass.constructors.single { c ->
