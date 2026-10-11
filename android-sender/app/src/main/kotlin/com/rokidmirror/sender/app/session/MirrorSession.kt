@@ -415,12 +415,14 @@ class MirrorSession(private val context: Context, private val container: AppCont
             } catch (e: MirrorException) {
                 clearComputer()
                 runCatching { encoder.stop() }
+                event("Computer mode failed: ${e.details ?: e.code.name}")
                 dispatch(SenderEvent.Failed(e.code, e.details))
                 throw e
             } catch (e: Exception) {
                 clearComputer()
                 runCatching { encoder.stop() }
                 val code = ErrorCode.PLATFORM_API_UNAVAILABLE
+                event("Computer mode failed: ${e.message}")
                 dispatch(SenderEvent.Failed(code, e.message))
                 throw MirrorException(code, e.message, e)
             }

@@ -115,40 +115,63 @@ class ComputerDisplayController {
                 arrayOf(String::class.java, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType),
             )
         }
-        val flagLadder = intArrayOf(
-            FLAG_PUBLIC or FLAG_PRESENTATION or FLAG_OWN_CONTENT_ONLY or FLAG_SUPPORTS_TOUCH or FLAG_SHOW_SYSTEM_DECORATIONS or FLAG_TRUSTED,
-            FLAG_PUBLIC or FLAG_PRESENTATION or FLAG_OWN_CONTENT_ONLY or FLAG_SHOW_SYSTEM_DECORATIONS or FLAG_TRUSTED,
-            FLAG_PUBLIC or FLAG_PRESENTATION or FLAG_OWN_CONTENT_ONLY or FLAG_TRUSTED,
+        // Trusted rungs first (what computer mode needs), then one untrusted probe used only to
+        // tell "the device blocks trusted displays for shell" apart from "it blocks all virtual
+        // displays". The probe is released immediately and never returned.
+        val ladder = listOf(
+            "trusted+touch+decor" to (FLAG_PUBLIC or FLAG_PRESENTATION or FLAG_OWN_CONTENT_ONLY or FLAG_SUPPORTS_TOUCH or FLAG_SHOW_SYSTEM_DECORATIONS or FLAG_TRUSTED),
+            "trusted+decor" to (FLAG_PUBLIC or FLAG_PRESENTATION or FLAG_OWN_CONTENT_ONLY or FLAG_SHOW_SYSTEM_DECORATIONS or FLAG_TRUSTED),
+            "trusted" to (FLAG_PUBLIC or FLAG_PRESENTATION or FLAG_OWN_CONTENT_ONLY or FLAG_TRUSTED),
         )
 
-        var lastError: Throwable? = null
-        for (flags in flagLadder) {
+        fun attempt(flags: Int): Pair<Int, Any> {
             val callback = newCallback(callbackClass)
-            try {
-                val builder = builderCtor.newInstance("RokidMirrorComputer", width, height, dpi)
-                builderClass.getMethod("setSurface", Surface::class.java).invoke(builder, surface)
-                builderClass.getMethod("setFlags", Int::class.javaPrimitiveType).invoke(builder, flags)
-                val config = builderClass.getMethod("build").invoke(builder)
-                val args = createMethod.parameterTypes.map { p ->
-                    when {
-                        configClass.isAssignableFrom(p) -> config
-                        callbackClass.isAssignableFrom(p) -> callback
-                        else -> defaultArg(p)
-                    }
-                }.toTypedArray()
-                val displayId = (createMethod.invoke(service, *args) as? Number)?.toInt() ?: -1
-                if (displayId >= 0) {
-                    MirrorLog.i(TAG, "computer_display_created", "id" to displayId, "flags" to "0x${flags.toString(16)}", "w" to width, "h" to height)
-                    return Handle(displayId, service, callback, releaseMethod, resizeMethod, setSurfaceMethod).also { handle = it }
+            val builder = builderCtor.newInstance("RokidMirrorComputer", width, height, dpi)
+            builderClass.getMethod("setSurface", Surface::class.java).invoke(builder, surface)
+            builderClass.getMethod("setFlags", Int::class.javaPrimitiveType).invoke(builder, flags)
+            val config = builderClass.getMethod("build").invoke(builder)
+            val args = createMethod.parameterTypes.map { p ->
+                when {
+                    configClass.isAssignableFrom(p) -> config
+                    callbackClass.isAssignableFrom(p) -> callback
+                    // The modern createVirtualDisplay takes the owner package; the display runs
+                    // under the shell identity, so name it rather than passing null (which NPEs).
+                    p == String::class.java -> "com.android.shell"
+                    else -> defaultArg(p)
                 }
+            }.toTypedArray()
+            val id = (createMethod.invoke(service, *args) as? Number)?.toInt() ?: -1
+            return id to callback
+        }
+
+        val outcomes = mutableListOf<String>()
+        for ((label, flags) in ladder) {
+            try {
+                val (id, callback) = attempt(flags)
+                if (id >= 0) {
+                    MirrorLog.i(TAG, "computer_display_created", "id" to id, "flags" to label)
+                    return Handle(id, service, callback, releaseMethod, resizeMethod, setSurfaceMethod).also { handle = it }
+                }
+                outcomes += "$label: declined (returned $id)"
                 runCatching { releaseMethod.invoke(service, callback) }
             } catch (e: Throwable) {
-                lastError = e
-                runCatching { releaseMethod.invoke(service, callback) }
+                val real = rootCause(e)
+                outcomes += "$label: ${real.javaClass.simpleName}: ${real.message ?: "no message"}"
+                MirrorLog.w(TAG, "display_attempt_failed", "flags" to label, "error" to "${real.javaClass.simpleName}: ${real.message}")
             }
         }
-        throw IllegalStateException("the system refused a trusted display: ${lastError?.message ?: "unknown reason"}", lastError)
+
+        // Diagnostic-only untrusted probe.
+        val untrusted = runCatching { attempt(FLAG_PUBLIC or FLAG_PRESENTATION or FLAG_OWN_CONTENT_ONLY) }
+        untrusted.onSuccess { (id, callback) ->
+            runCatching { releaseMethod.invoke(service, callback) }
+            outcomes += if (id >= 0) "untrusted: OK (so the device blocks TRUSTED displays for shell)" else "untrusted: also declined ($id)"
+        }.onFailure { outcomes += "untrusted: ${rootCause(it).javaClass.simpleName}: ${rootCause(it).message ?: "no message"}" }
+
+        throw IllegalStateException("the system refused the computer display — ${outcomes.joinToString(" | ")}")
     }
+
+    private fun rootCause(e: Throwable): Throwable = generateSequence(e) { it.cause }.last()
 
     fun stop() {
         handle?.release()
