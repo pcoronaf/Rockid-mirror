@@ -415,18 +415,36 @@ class MirrorSession(private val context: Context, private val container: AppCont
             } catch (e: MirrorException) {
                 clearComputer()
                 runCatching { encoder.stop() }
-                event("Computer mode failed: ${e.details ?: e.code.name}")
-                dispatch(SenderEvent.Failed(e.code, e.details))
+                val detail = e.details ?: describeThrowable(e)
+                event("Computer mode failed: $detail")
+                dispatch(SenderEvent.Failed(e.code, detail))
                 throw e
             } catch (e: Exception) {
                 clearComputer()
                 runCatching { encoder.stop() }
                 val code = ErrorCode.PLATFORM_API_UNAVAILABLE
-                event("Computer mode failed: ${e.message}")
-                dispatch(SenderEvent.Failed(code, e.message))
-                throw MirrorException(code, e.message, e)
+                val detail = describeThrowable(e)
+                event("Computer mode failed: $detail")
+                dispatch(SenderEvent.Failed(code, detail))
+                throw MirrorException(code, detail, e)
             }
         }
+    }
+
+    /**
+     * The whole cause chain plus the first app stack frame, so a computer-mode failure names what
+     * threw and where even when the exception itself carries no message (a reflective
+     * InvocationTargetException does not). This is the only window we have into the hidden-API path
+     * on real hardware.
+     */
+    private fun describeThrowable(e: Throwable): String {
+        val chain = generateSequence(e) { it.cause }
+            .joinToString(" <- ") { "${it.javaClass.simpleName}: ${it.message ?: "(no message)"}" }
+        val root = generateSequence(e) { it.cause }.last()
+        val frame = root.stackTrace.firstOrNull { it.className.startsWith("com.rokidmirror") }
+            ?: root.stackTrace.firstOrNull()
+        val at = frame?.let { "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" } ?: "?"
+        return "$chain @ $at".take(400)
     }
 
     /** Launches another app onto the running computer display without restarting the stream. */
